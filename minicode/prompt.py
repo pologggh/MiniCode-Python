@@ -11,7 +11,7 @@ from minicode.product_surfaces import (
     ReadinessReport,
     build_product_snapshot,
 )
-from minicode.skill_router import get_skill_router
+from minicode.skill_router import get_skill_router, normalize_top_k
 
 
 def _maybe_read(path: Path) -> str | None:
@@ -169,10 +169,10 @@ def build_system_prompt_bundle(
     user_query = str(extras.get("user_query") or extras.get("query") or "").strip()
     routing_enabled = os.environ.get("MINI_CODE_SKILL_ROUTING", "1").strip().lower() not in ("0", "false", "no", "off")
     skill_top_k = extras.get("skill_top_k")
-    try:
-        configured_top_k = int(skill_top_k) if skill_top_k is not None else int(os.environ.get("MINI_CODE_SKILL_TOP_K", "5"))
-    except ValueError:
-        configured_top_k = 5
+    configured_top_k = normalize_top_k(
+        skill_top_k,
+        default=normalize_top_k(os.environ.get("MINI_CODE_SKILL_TOP_K"), default=5),
+    )
 
     if skills:
         def _build_skills():
@@ -203,15 +203,9 @@ def build_system_prompt_bundle(
             lines.extend([
                 "",
                 "SKILL USAGE GUIDE:",
-                "- Skills provide specialized instructions for specific tasks. Call load_skill(name) to read the full skill content.",
-                "- When user asks for creative brainstorming, use 'brainstorming' skill",
-                "- When writing implementation plans, use 'writing-plans' skill",
-                "- When debugging systematically, use 'systematic-debugging' skill",
-                "- When doing TDD, use 'test-driven-development' skill",
-                "- When reviewing code in Chinese, use 'chinese-code-review' skill",
-                "- When user asks about workflows, check 'using-superpowers' skill first",
-                "- For complex multi-step tasks, consider 'subagent-driven-development'",
-                "- Before completing, ALWAYS use 'verification-before-completion'",
+                "- Skills provide specialized workflows and domain knowledge for specific tasks.",
+                "- Use the task-relevant skills listed above, or call load_skill(name) to read full instructions on demand.",
+                "- Before completing multi-step tasks or making high-impact changes, load and follow relevant verification and testing skills if available.",
             ])
             return "\n".join(lines)
 

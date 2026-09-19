@@ -15,6 +15,20 @@ from minicode.skills import SkillSummary
 DEFAULT_TOP_K = 5
 MIN_RELEVANCE_THRESHOLD = 1.0
 
+
+def normalize_top_k(val: Any, default: int = DEFAULT_TOP_K, max_k: int = 20) -> int:
+    """Safely parse, sanitize, and clamp top_k to [1, max_k]."""
+    safe_default = max(1, min(default, max_k))
+    if val is None or isinstance(val, bool):
+        return safe_default
+    try:
+        k = int(val)
+        if k <= 0:
+            return safe_default
+        return min(max(k, 1), max_k)
+    except (ValueError, TypeError):
+        return safe_default
+
 _STOP_WORDS = frozenset({
     "a", "an", "the", "and", "or", "in", "on", "at", "to", "for", "of", "with",
     "by", "from", "up", "about", "into", "over", "after", "is", "are", "was",
@@ -126,6 +140,31 @@ def normalize_query(query: str) -> tuple[str, list[str]]:
     return lowered, tokens
 
 
+def _matches_term_boundary(
+    term: str,
+    text: str,
+    token_set: frozenset[str] | set[str] | None = None,
+) -> bool:
+    """Check if term matches text using word/token boundary semantics.
+
+    Prevents substring false positives such as 'go' matching 'django'
+    or 'c' matching 'docker'.
+    """
+    term_clean = term.strip().lower()
+    if not term_clean or not text:
+        return False
+
+    if token_set is not None and term_clean in token_set:
+        return True
+
+    text_clean = text.strip().lower()
+    if term_clean == text_clean:
+        return True
+
+    pattern = rf"(?<![a-z0-9_-]){re.escape(term_clean)}(?![a-z0-9_-])"
+    return bool(re.search(pattern, text_clean))
+
+
 def _coerce_skill_summary(skill: SkillSummary | dict[str, Any]) -> SkillSummary:
     """Safely adapt either a SkillSummary object or a dictionary."""
     if isinstance(skill, SkillSummary):
@@ -173,7 +212,7 @@ class SkillRouter:
     """
 
     def __init__(self, default_top_k: int = DEFAULT_TOP_K) -> None:
-        self.default_top_k = default_top_k
+        self.default_top_k = normalize_top_k(default_top_k)
 
     def recall(
         self,
@@ -212,89 +251,106 @@ class SkillRouter:
             if not skill.name:
                 continue
 
-            score = 0.0
+            lexical_score = 0.0
             matched_fields: list[str] = []
             reasons: list[str] = []
 
             skill_name_lower = skill.name.lower()
             skill_name_normalized = skill_name_lower.replace("-", " ").replace("_", " ")
 
-            # 1. Exact Name Matching
+            # 1. Exact Name Matching and Word-Boundary Name in Query
             if skill_name_lower == lowered_query or skill_name_normalized == lowered_query:
-                score += 15.0
+                lexical_score += 15.0
                 matched_fields.append("exact_name")
                 reasons.append("exact skill name match")
-            elif skill_name_lower in lowered_query or skill_name_normalized in lowered_query:
-                score += 10.0
+            elif _matches_term_boundary(skill_name_lower, lowered_query, query_token_set) or (
+                skill_name_normalized != skill_name_lower
+                and _matches_term_boundary(skill_name_normalized, lowered_query)
+            ):
+                lexical_score += 10.0
                 matched_fields.append("name_in_query")
                 reasons.append(f"skill name '{skill.name}' mentioned in query")
             else:
                 # Subparts of name matching query
-                name_subparts = [p for p in re.split(r"[-_\s]+", skill_name_lower) if p and p not in _STOP_WORDS]
+                name_subparts = [
+                    p for p in re.split(r"[-_\s]+", skill_name_lower)
+                    if p and p not in _STOP_WORDS
+                ]
                 if name_subparts and all(p in query_token_set for p in name_subparts):
-                    score += 6.0
+                    lexical_score += 6.0
                     matched_fields.append("all_name_tokens")
                     reasons.append(f"all name tokens of '{skill.name}' matched")
                 elif any(p in query_token_set for p in name_subparts):
                     overlap = [p for p in name_subparts if p in query_token_set]
-                    score += 2.0 * len(overlap)
+                    lexical_score += 2.0 * len(overlap)
                     matched_fields.append("partial_name_tokens")
                     reasons.append(f"matched name keywords: {', '.join(overlap)}")
 
-            # 2. Tag Matching
+            # 2. Tag Matching with boundary check
             matched_tags: list[str] = []
             for tag in skill.tags:
                 tag_lower = tag.lower().strip()
                 if not tag_lower:
                     continue
-                if tag_lower in query_token_set or tag_lower in lowered_query:
+                if _matches_term_boundary(tag_lower, lowered_query, query_token_set):
                     matched_tags.append(tag)
-                    score += 3.0
+                    lexical_score += 3.0
 
             if matched_tags:
                 matched_fields.append("tags")
                 reasons.append(f"matched tags: {', '.join(matched_tags)}")
 
-            # 3. Category Matching
+            # 3. Category Matching with boundary check
             if skill.category:
                 cat_lower = skill.category.lower().strip()
-                if cat_lower and (cat_lower in query_token_set or cat_lower in lowered_query):
-                    score += 2.0
+                if cat_lower and _matches_term_boundary(cat_lower, lowered_query, query_token_set):
+                    lexical_score += 2.0
                     matched_fields.append("category")
                     reasons.append(f"matched category '{skill.category}'")
 
             # 4. Description Term Overlap
             if skill.description:
                 desc_tokens = [
-                    tok.strip("-_.") for tok in re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]", skill.description.lower())
+                    tok.strip("-_.")
+                    for tok in re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]", skill.description.lower())
                     if tok and tok not in _STOP_WORDS
                 ]
                 desc_matches = [t for t in desc_tokens if t in query_token_set]
-                # Unique matching terms
                 unique_desc_matches = list(dict.fromkeys(desc_matches))
                 if unique_desc_matches:
                     overlap_score = min(len(unique_desc_matches) * 1.0, 5.0)
-                    score += overlap_score
+                    lexical_score += overlap_score
                     matched_fields.append("description")
                     reasons.append(f"matched description terms: {', '.join(unique_desc_matches[:4])}")
 
-            # 5. Common Code Clues (framework/language)
-            clue_matches = [c for c in _COMMON_CODE_TOKENS if c in skill_name_lower and c in query_token_set]
+            # 5. Common Code Clues (framework/language) with token boundaries
+            skill_name_tokens = frozenset(p for p in re.split(r"[-_\s]+", skill_name_lower) if p)
+            clue_matches = [
+                c for c in _COMMON_CODE_TOKENS
+                if c in skill_name_tokens and c in query_token_set
+            ]
             if clue_matches and "exact_name" not in matched_fields and "name_in_query" not in matched_fields:
-                score += 2.0
+                lexical_score += 2.0
                 matched_fields.append("framework_clue")
                 reasons.append(f"matched framework clue '{clue_matches[0]}'")
 
-            # 6. Priority small deterministic bonus
-            if skill.priority > 0:
-                score += min(skill.priority * 0.05, 1.0)
+            # 6. Priority small deterministic bonus (strictly requires prior lexical match)
+            if lexical_score > 0 and skill.priority > 0:
+                priority_bonus = min(skill.priority * 0.05, 1.0)
+                final_score = lexical_score + priority_bonus
+            elif lexical_score > 0:
+                final_score = lexical_score
+            else:
+                final_score = 0.0
+                matched_fields = []
+                reasons = []
 
             reason_str = "; ".join(reasons) if reasons else "baseline catalog entry"
 
             candidates.append(
                 CandidateSkill(
                     skill_name=skill.name,
-                    score=round(score, 4),
+                    score=round(final_score, 4),
                     matched_fields=matched_fields,
                     category=skill.category,
                     tags=skill.tags,
@@ -321,31 +377,34 @@ class SkillRouter:
         token_budget: int | None = None,
     ) -> tuple[list[CandidateSkill], SkillRoutingMetrics]:
         """Perform full recall -> rank -> select pipeline."""
-        k = top_k if top_k is not None else self.default_top_k
+        k = normalize_top_k(top_k, default=self.default_top_k)
         recalled = self.recall(query, skills, category_filter=category_filter)
         ranked = self.rank(query, recalled)
 
         # Filter by threshold (empty query yields empty selection if threshold > 0)
         has_query = bool(query and query.strip())
         if has_query:
-            filtered = [c for c in ranked if c.score >= min_threshold]
+            filtered = [c for c in ranked if c.score >= min_threshold and c.score > 0]
         else:
             filtered = []
 
         selected = filtered[:k]
 
-        # Budget constraint if specified
-        if token_budget is not None and token_budget > 0:
-            budget_trimmed: list[CandidateSkill] = []
-            current_tokens = 0
-            for cand in selected:
-                cand_text = f"{cand.skill_name}: {cand.description}"
-                cand_tokens = estimate_tokens(cand_text)
-                if current_tokens + cand_tokens > token_budget and budget_trimmed:
-                    break
-                budget_trimmed.append(cand)
-                current_tokens += cand_tokens
-            selected = budget_trimmed
+        # Budget constraint if specified: break immediately when next candidate exceeds budget
+        if token_budget is not None:
+            if token_budget <= 0:
+                selected = []
+            else:
+                budget_trimmed: list[CandidateSkill] = []
+                current_tokens = 0
+                for cand in selected:
+                    cand_text = f"{cand.skill_name}: {cand.description}"
+                    cand_tokens = estimate_tokens(cand_text)
+                    if current_tokens + cand_tokens > token_budget:
+                        break
+                    budget_trimmed.append(cand)
+                    current_tokens += cand_tokens
+                selected = budget_trimmed
 
         # Token estimates
         full_catalog_text = "\n".join(f"- {s.name}: {s.description}" for s in recalled)
@@ -356,7 +415,7 @@ class SkillRouter:
 
         metrics = SkillRoutingMetrics(
             query=query,
-            candidate_count=len(skills),
+            candidate_count=len(recalled),
             selected_count=len(selected),
             selected_skills=[c.skill_name for c in selected],
             scores={c.skill_name: c.score for c in selected},
@@ -404,9 +463,5 @@ _global_router: SkillRouter | None = None
 def get_skill_router(top_k: int = DEFAULT_TOP_K) -> SkillRouter:
     """Return a configured SkillRouter instance."""
     configured_k = os.environ.get("MINI_CODE_SKILL_TOP_K")
-    if configured_k:
-        try:
-            top_k = int(configured_k)
-        except ValueError:
-            pass
-    return SkillRouter(default_top_k=top_k)
+    k = normalize_top_k(configured_k, default=top_k)
+    return SkillRouter(default_top_k=k)

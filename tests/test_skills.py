@@ -1,7 +1,7 @@
 from pathlib import Path
 import pytest
 
-from minicode.skills import discover_skills, load_skill
+from minicode.skills import discover_skills, load_skill, parse_frontmatter, install_skill
 
 
 @pytest.fixture(autouse=True)
@@ -123,5 +123,99 @@ def test_load_skill_prevents_directory_traversal(tmp_path: Path) -> None:
     assert load_skill(tmp_path, "../outside") is None
     assert load_skill(tmp_path, "foo/bar") is None
     assert load_skill(tmp_path, "..\\outside") is None
+
+
+def test_parse_frontmatter_constrained_schema_and_malformed():
+    # 1. Valid constrained frontmatter
+    valid_content = """---
+name: sample-skill
+description: A clean test skill
+category: testing
+tags: [pytest, unit]
+version: "2.0"
+priority: 15
+unknown_field: should be ignored
+author: nobody
+---
+# Body Title
+Body text.
+"""
+    meta, body = parse_frontmatter(valid_content)
+    assert meta["name"] == "sample-skill"
+    assert meta["description"] == "A clean test skill"
+    assert meta["category"] == "testing"
+    assert meta["tags"] == ["pytest", "unit"]
+    assert meta["version"] == "2.0"
+    assert meta["priority"] == 15
+    assert "unknown_field" not in meta
+    assert "author" not in meta
+    assert "# Body Title" in body
+
+    # 2. Unclosed bracket in tags
+    bad_bracket = """---
+name: broken
+tags: [unclosed, list
+---
+body
+"""
+    meta_bad, body_bad = parse_frontmatter(bad_bracket)
+    assert meta_bad == {}
+    assert "body" in body_bad
+
+    # 3. Unclosed quote
+    bad_quote = """---
+name: "unclosed string
+---
+body
+"""
+    meta_quote, body_quote = parse_frontmatter(bad_quote)
+    assert meta_quote == {}
+
+    # 4. Invalid priority type
+    bad_prio = """---
+name: test
+priority: not-an-int
+---
+body
+"""
+    meta_prio, _ = parse_frontmatter(bad_prio)
+    assert meta_prio == {}
+
+
+def test_symlink_and_traversal_containment_defense(tmp_path: Path) -> None:
+    # 1. Traversal in load_skill
+    assert load_skill(tmp_path, "../outside") is None
+    assert load_skill(tmp_path, "sub/outside") is None
+    assert load_skill(tmp_path, "..\\outside") is None
+
+    # 2. Traversal in install_skill
+    with pytest.raises(ValueError, match="Invalid skill name"):
+        install_skill(tmp_path, str(tmp_path), name="../malicious")
+    with pytest.raises(ValueError, match="Invalid skill name"):
+        install_skill(tmp_path, str(tmp_path), name="foo/bar")
+
+    # 3. Symlink escape containment
+    outside_dir = tmp_path / "outside_project"
+    outside_dir.mkdir(parents=True)
+    outside_skill = outside_dir / "SKILL.md"
+    outside_skill.write_text("---\nname: escaped\n---\nEscaped body", encoding="utf-8")
+
+    skills_root = tmp_path / ".mini-code" / "skills"
+    skills_root.mkdir(parents=True)
+    symlink_dir = skills_root / "escaped-skill"
+
+    try:
+        symlink_dir.symlink_to(outside_dir, target_is_directory=True)
+        # Should be rejected because it escapes skills_root
+        loaded = load_skill(tmp_path, "escaped-skill")
+        assert loaded is None
+        discovered = discover_skills(tmp_path, force_refresh=True)
+        assert not any(s.name == "escaped" for s in discovered)
+    except OSError:
+        # On Windows environments where symlink creation requires admin/developer mode,
+        # test the path containment logic using mocked resolve
+        from unittest.mock import patch
+        with patch.object(Path, "is_relative_to", return_value=False):
+            assert load_skill(tmp_path, "my-skill") is None
 
 

@@ -7,14 +7,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# Optional PyYAML support with robust zero-dependency fallback
-try:
-    import yaml  # type: ignore
-    _HAS_YAML = True
-except ImportError:
-    _HAS_YAML = False
-
-
 @dataclass(slots=True)
 class SkillMetadata:
     """Structured metadata parsed from SKILL.md frontmatter."""
@@ -55,43 +47,85 @@ _FRONTMATTER_PATTERN = re.compile(
 )
 
 
-def _simple_yaml_parse(yaml_text: str) -> dict[str, Any]:
-    """Lightweight, zero-dependency parser for standard skill frontmatter."""
+def _parse_skill_frontmatter(yaml_text: str) -> dict[str, Any]:
+    """Deterministic, zero-dependency parser for constrained skill frontmatter.
+
+    Strictly supports only the 6 defined schema fields:
+    name, description, category, tags, version, priority.
+    Raises ValueError on malformed syntax (e.g. unclosed brackets, braces, quotes).
+    """
     result: dict[str, Any] = {}
     current_key: str | None = None
-    for line in yaml_text.splitlines():
-        line = line.rstrip()
+
+    for raw_line in yaml_text.splitlines():
+        line = raw_line.rstrip()
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        if stripped.startswith("- ") and current_key is not None:
-            item = stripped[2:].strip().strip("\"'")
-            if not isinstance(result.get(current_key), list):
-                result[current_key] = []
-            result[current_key].append(item)
+
+        # Check for unclosed flow syntax or unclosed quotes
+        if stripped.count("[") != stripped.count("]"):
+            raise ValueError(f"Unclosed bracket in YAML line: {stripped}")
+        if stripped.count("{") != stripped.count("}"):
+            raise ValueError(f"Unclosed brace in YAML line: {stripped}")
+        unquoted = stripped.replace(r'\"', '').replace(r"\'", '')
+        if unquoted.count('"') % 2 != 0 or unquoted.count("'") % 2 != 0:
+            raise ValueError(f"Unclosed quote in YAML line: {stripped}")
+
+        # Bullet list item under current_key (e.g. - python)
+        if stripped.startswith("- "):
+            if current_key == "tags":
+                item = stripped[2:].strip().strip("\"'")
+                if "tags" not in result or not isinstance(result["tags"], list):
+                    result["tags"] = []
+                if item:
+                    result["tags"].append(item)
             continue
-        if ":" in stripped:
-            key, sep, val = stripped.partition(":")
-            key = key.strip()
-            val = val.strip().strip("\"'")
-            if not val:
-                result[key] = []
-                current_key = key
+
+        if ":" not in stripped:
+            raise ValueError(f"Missing colon in YAML line: {stripped}")
+
+        key, sep, val = stripped.partition(":")
+        key = key.strip().lower()
+        val = val.strip()
+
+        # Ignore unsupported frontmatter fields to remain strictly constrained
+        if key not in ("name", "description", "category", "tags", "version", "priority"):
+            current_key = None
+            continue
+
+        current_key = key
+
+        if not val:
+            if key == "tags" and "tags" not in result:
+                result["tags"] = []
+            continue
+
+        val_unquoted = val.strip("\"'")
+
+        if key == "priority":
+            try:
+                result["priority"] = int(val_unquoted)
+            except (ValueError, TypeError):
+                raise ValueError(f"Invalid integer for priority: {val}")
+        elif key == "tags":
+            if val.startswith("[") and val.endswith("]"):
+                inner = val[1:-1]
+                parts = [p.strip().strip("\"'") for p in inner.split(",") if p.strip()]
+                result["tags"] = parts
+            elif "," in val:
+                parts = [p.strip().strip("\"'") for p in val.split(",") if p.strip()]
+                result["tags"] = parts
             else:
-                if val.isdigit() or (val.startswith("-") and val[1:].isdigit()):
-                    result[key] = int(val)
-                elif val.lower() == "true":
-                    result[key] = True
-                elif val.lower() == "false":
-                    result[key] = False
-                else:
-                    result[key] = val
-                current_key = key
+                result["tags"] = [val_unquoted] if val_unquoted else []
+        else:
+            result[key] = val_unquoted
+
     return result
 
 
 def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
-    """Extract and parse optional YAML frontmatter from markdown content.
+    """Extract and parse optional YAML frontmatter using the canonical constrained parser.
 
     Returns:
         (frontmatter_dict, body_content). If frontmatter is missing or
@@ -108,20 +142,8 @@ def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     yaml_text, body = match.groups()
     body = body or ""
 
-    # Try PyYAML if available
-    if _HAS_YAML:
-        try:
-            parsed = yaml.safe_load(yaml_text)
-            if isinstance(parsed, dict):
-                return parsed, body
-            return {}, body
-        except Exception:
-            # PyYAML failed to parse malformed frontmatter
-            return {}, body
-
-    # Fallback to internal lightweight parser when PyYAML is not installed
     try:
-        parsed = _simple_yaml_parse(yaml_text)
+        parsed = _parse_skill_frontmatter(yaml_text)
         if isinstance(parsed, dict):
             return parsed, body
     except Exception:
@@ -204,20 +226,36 @@ def _skill_roots(cwd: str | Path) -> list[tuple[Path, str]]:
 def _list_skill_dirs(root: Path, source: str) -> list[LoadedSkill]:
     if not root.exists():
         return []
+    try:
+        resolved_root = root.resolve()
+    except OSError:
+        return []
+
     results: list[LoadedSkill] = []
-    for entry in root.iterdir():
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return []
+
+    for entry in entries:
         try:
             if not entry.is_dir():
                 continue
-        except OSError:
-            # Windows: untrusted mount points, broken symlinks, etc.
+            resolved_entry = entry.resolve()
+            if not resolved_entry.is_relative_to(resolved_root):
+                continue
+        except (OSError, ValueError):
+            # Windows: untrusted mount points, broken symlinks, escape attempts, etc.
             continue
         skill_path = entry / "SKILL.md"
         if not skill_path.exists():
             continue
         try:
+            resolved_skill_path = skill_path.resolve()
+            if not resolved_skill_path.is_relative_to(resolved_root):
+                continue
             content = skill_path.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, ValueError):
             continue
 
         metadata, body = extract_skill_metadata(content, entry.name)
@@ -288,9 +326,18 @@ def load_skill(cwd: str | Path, name: str) -> LoadedSkill | None:
 
     # Fast path: check direct directory name match across root precedence
     for root, source in _skill_roots(cwd):
+        if not root.exists():
+            continue
+        try:
+            resolved_root = root.resolve()
+        except OSError:
+            continue
         skill_path = root / normalized_name / "SKILL.md"
         if skill_path.exists():
             try:
+                resolved_skill = skill_path.resolve()
+                if not resolved_skill.is_relative_to(resolved_root):
+                    continue
                 content = skill_path.read_text(encoding="utf-8")
                 metadata, body = extract_skill_metadata(content, normalized_name)
                 return LoadedSkill(
@@ -305,7 +352,7 @@ def load_skill(cwd: str | Path, name: str) -> LoadedSkill | None:
                     metadata=metadata,
                     content=content,
                 )
-            except OSError:
+            except (OSError, ValueError):
                 continue
 
     # Fallback path: scan directories in precedence order for matching metadata.name
@@ -313,32 +360,40 @@ def load_skill(cwd: str | Path, name: str) -> LoadedSkill | None:
         if not root.exists():
             continue
         try:
-            for entry in root.iterdir():
+            resolved_root = root.resolve()
+            entries = list(root.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            try:
                 if not entry.is_dir():
+                    continue
+                resolved_entry = entry.resolve()
+                if not resolved_entry.is_relative_to(resolved_root):
                     continue
                 skill_path = entry / "SKILL.md"
                 if not skill_path.exists():
                     continue
-                try:
-                    content = skill_path.read_text(encoding="utf-8")
-                    metadata, body = extract_skill_metadata(content, entry.name)
-                    if metadata.name == normalized_name:
-                        return LoadedSkill(
-                            name=metadata.name,
-                            description=metadata.description,
-                            path=str(skill_path),
-                            source=source,
-                            category=metadata.category,
-                            tags=metadata.tags,
-                            version=metadata.version,
-                            priority=metadata.priority,
-                            metadata=metadata,
-                            content=content,
-                        )
-                except OSError:
+                resolved_skill = skill_path.resolve()
+                if not resolved_skill.is_relative_to(resolved_root):
                     continue
-        except OSError:
-            continue
+                content = skill_path.read_text(encoding="utf-8")
+                metadata, body = extract_skill_metadata(content, entry.name)
+                if metadata.name == normalized_name:
+                    return LoadedSkill(
+                        name=metadata.name,
+                        description=metadata.description,
+                        path=str(skill_path),
+                        source=source,
+                        category=metadata.category,
+                        tags=metadata.tags,
+                        version=metadata.version,
+                        priority=metadata.priority,
+                        metadata=metadata,
+                        content=content,
+                    )
+            except (OSError, ValueError):
+                continue
 
     return None
 
@@ -348,6 +403,11 @@ def _managed_skill_root(scope: str, cwd: str | Path) -> Path:
 
 
 def install_skill(cwd: str | Path, source_path: str, name: str | None = None, scope: str = "user") -> dict[str, str]:
+    if name is not None:
+        trimmed_name = name.strip()
+        if ".." in trimmed_name or "/" in trimmed_name or "\\" in trimmed_name:
+            raise ValueError(f"Invalid skill name: {name}")
+
     source = Path(source_path)
     if not source.is_absolute():
         source = Path(cwd) / source
@@ -363,6 +423,8 @@ def install_skill(cwd: str | Path, source_path: str, name: str | None = None, sc
     skill_name = (name or inferred_name).strip()
     if not skill_name:
         raise RuntimeError("Skill name cannot be empty.")
+    if ".." in skill_name or "/" in skill_name or "\\" in skill_name:
+        raise ValueError(f"Invalid skill name: {skill_name}")
 
     target_dir = _managed_skill_root(scope, cwd) / skill_name
     target_dir.mkdir(parents=True, exist_ok=True)

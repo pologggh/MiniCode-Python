@@ -178,3 +178,65 @@ def test_build_system_prompt_does_not_inject_full_skill_body():
     assert "A secure skill summary" in prompt
     assert full_secret_content not in prompt
 
+
+def test_build_system_prompt_no_hardcoded_skills():
+    from minicode.prompt import build_system_prompt
+
+    # Build prompt with an unrelated skill and query
+    skills = [
+        {
+            "name": "data-analysis",
+            "description": "Pandas dataframe analytics",
+            "category": "data",
+            "tags": ["pandas"],
+        }
+    ]
+    prompt = build_system_prompt(
+        ".",
+        [],
+        {
+            "skills": skills,
+            "user_query": "analyze this dataframe with pandas",
+        },
+    )
+
+    # Hardcoded skill names from Phase 1 should NOT be present
+    for banned in (
+        "brainstorming",
+        "writing-plans",
+        "systematic-debugging",
+        "chinese-code-review",
+        "using-superpowers",
+        "verification-before-completion",
+        "subagent-driven-development",
+    ):
+        assert f"'{banned}'" not in prompt and f'"{banned}"' not in prompt
+
+    # Generic guide should be present
+    assert "SKILL USAGE GUIDE:" in prompt
+    assert "data-analysis" in prompt
+
+
+def test_build_system_prompt_top_k_sanitization():
+    from minicode.prompt import build_system_prompt
+
+    skills = [
+        {"name": f"skill-{i:02d}", "description": f"desc {i}", "tags": ["tag"]}
+        for i in range(30)
+    ]
+
+    # Non-integer / negative / extreme top_k should not crash and be clamped to [1, 20]
+    for bad_k in ("invalid", -5, 0, 100, None):
+        prompt = build_system_prompt(
+            ".",
+            [],
+            {
+                "skills": skills,
+                "user_query": "tag",
+                "skill_top_k": bad_k,
+            },
+        )
+        assert "Available skills (task-relevant):" in prompt
+        # Maximum allowed top_k is 20 (skill-00 to skill-19), so skill-20+ should never appear
+        assert "skill-20" not in prompt
+
