@@ -313,3 +313,26 @@ def test_core_tool_registry_does_not_import_utility_modules(tmp_path: Path) -> N
     create_default_tool_registry(str(tmp_path), runtime={"toolProfile": "core"})
 
     assert all(module_name not in sys.modules for module_name in utility_modules)
+
+
+def test_load_skill_tool_loads_skill_content(tmp_path: Path) -> None:
+    from minicode.tools.load_skill import create_load_skill_tool
+
+    skill_file = tmp_path / ".mini-code" / "skills" / "custom-helper" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True)
+    skill_file.write_text("# Custom Helper\n\nFull custom skill documentation.", encoding="utf-8")
+
+    tool = create_load_skill_tool(str(tmp_path))
+    result = tool.run({"name": "custom-helper"}, ToolContext(cwd=str(tmp_path)))
+    assert result.ok is True
+    assert "SKILL: custom-helper" in result.output
+    assert "Full custom skill documentation." in result.output
+
+
+def test_load_skill_tool_rejects_traversal(tmp_path: Path) -> None:
+    from minicode.tools.load_skill import create_load_skill_tool
+
+    tool = create_load_skill_tool(str(tmp_path))
+    with pytest.raises(ValueError, match="path traversal"):
+        tool.validator({"name": "../secret"})
+

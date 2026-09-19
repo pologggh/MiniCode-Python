@@ -90,3 +90,91 @@ def test_build_system_prompt_bundle_handles_malformed_skill():
         ".", [], {"mcpServers": [], "skills": [{"name": "s"}], "memory_context": "", "runtime": {}}
     )
     assert isinstance(bundle.prompt, str) and bundle.prompt
+
+
+def test_build_system_prompt_adaptive_skill_routing_injects_task_relevant_skills():
+    from minicode.prompt import build_system_prompt
+
+    skills = [
+        {
+            "name": "fastapi-debugging",
+            "description": "Debug FastAPI endpoint failures",
+            "category": "backend",
+            "tags": ["fastapi", "api"],
+            "priority": 10,
+        },
+        {
+            "name": "react-ui",
+            "description": "Frontend React component library",
+            "category": "frontend",
+            "tags": ["react", "ui"],
+            "priority": 5,
+        },
+    ]
+
+    prompt = build_system_prompt(
+        ".",
+        [],
+        {
+            "skills": skills,
+            "user_query": "Help me fix this FastAPI request crash",
+        },
+    )
+
+    assert "Available skills (task-relevant):" in prompt
+    assert "fastapi-debugging" in prompt
+    assert "reason:" in prompt
+    assert "react-ui" not in prompt  # Irrelevant skill excluded from top-k
+
+
+def test_build_system_prompt_adaptive_skill_routing_fallback_when_unmatched():
+    from minicode.prompt import build_system_prompt
+
+    skills = [
+        {
+            "name": "fastapi-debugging",
+            "description": "Debug FastAPI endpoint failures",
+            "category": "backend",
+            "tags": ["fastapi", "api"],
+            "priority": 10,
+        }
+    ]
+
+    prompt = build_system_prompt(
+        ".",
+        [],
+        {
+            "skills": skills,
+            "user_query": "unrelated quantum mechanics calculation",
+        },
+    )
+
+    assert "No specific skills matched this task query" in prompt
+    assert "load_skill(name)" in prompt
+
+
+def test_build_system_prompt_does_not_inject_full_skill_body():
+    from minicode.prompt import build_system_prompt
+
+    full_secret_content = "DETAILED_INSTRUCTION_BODY_SECRET_CODE_12345"
+    skills = [
+        {
+            "name": "secure-skill",
+            "description": "A secure skill summary",
+            "content": full_secret_content,  # LoadedSkill content should NOT be in prompt
+        }
+    ]
+
+    prompt = build_system_prompt(
+        ".",
+        [],
+        {
+            "skills": skills,
+            "user_query": "use secure-skill",
+        },
+    )
+
+    assert "secure-skill" in prompt
+    assert "A secure skill summary" in prompt
+    assert full_secret_content not in prompt
+

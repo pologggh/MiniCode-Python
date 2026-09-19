@@ -605,6 +605,7 @@ def main() -> None:
                         "skills": tools.get_skills(),
                         "mcpServers": tools.get_mcp_servers(),
                         "memory_context": memory_mgr.get_relevant_context(query=user_input),
+                        "user_query": user_input,
                         "runtime": runtime,
                     },
                 )

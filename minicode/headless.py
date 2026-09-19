@@ -235,6 +235,7 @@ def run_headless(prompt: str | None = None, allow_edits: bool = False) -> str:
                     "skills": tools.get_skills(),
                     "mcpServers": tools.get_mcp_servers(),
                     "memory_context": memory_mgr.get_relevant_context(),
+                    "user_query": prompt,
                 },
             ),
         },

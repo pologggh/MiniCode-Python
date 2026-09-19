@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from minicode.prompt_pipeline import PromptPipeline, read_file_cached
@@ -10,6 +11,7 @@ from minicode.product_surfaces import (
     ReadinessReport,
     build_product_snapshot,
 )
+from minicode.skill_router import get_skill_router
 
 
 def _maybe_read(path: Path) -> str | None:
@@ -162,20 +164,46 @@ def build_system_prompt_bundle(
         )
         pipeline.register_dynamic("permissions", lambda: perm_text)
 
-    # Skills section with conditional injection
+    # Skills section with adaptive routing and top-k catalog injection
     skills = extras.get("skills", [])
+    user_query = str(extras.get("user_query") or extras.get("query") or "").strip()
+    routing_enabled = os.environ.get("MINI_CODE_SKILL_ROUTING", "1").strip().lower() not in ("0", "false", "no", "off")
+    skill_top_k = extras.get("skill_top_k")
+    try:
+        configured_top_k = int(skill_top_k) if skill_top_k is not None else int(os.environ.get("MINI_CODE_SKILL_TOP_K", "5"))
+    except ValueError:
+        configured_top_k = 5
+
     if skills:
         def _build_skills():
-            lines = ["Available skills:"]
-            lines.extend(
-                f"- {skill.get('name', '?')}: {skill.get('description', '')}"
-                if isinstance(skill, dict)
-                else f"- {skill}"
-                for skill in skills
-            )
+            lines: list[str] = []
+            router = get_skill_router(top_k=configured_top_k)
+
+            if routing_enabled and user_query:
+                selected_cands, metrics = router.select(
+                    query=user_query,
+                    skills=skills,
+                    top_k=configured_top_k,
+                )
+                if selected_cands:
+                    lines.append(router.format_catalog(selected_cands))
+                else:
+                    lines.append(router.format_fallback_catalog(has_skills=True))
+            else:
+                lines.append("Available skills:")
+                display_skills = skills if not routing_enabled else skills[:configured_top_k]
+                for skill in display_skills:
+                    if isinstance(skill, dict):
+                        lines.append(f"- {skill.get('name', '?')}: {skill.get('description', '')}")
+                    else:
+                        lines.append(f"- {skill}")
+                if routing_enabled and len(skills) > len(display_skills):
+                    lines.append(f"  ... and {len(skills) - len(display_skills)} more installed skills (load by name via load_skill)")
+
             lines.extend([
                 "",
                 "SKILL USAGE GUIDE:",
+                "- Skills provide specialized instructions for specific tasks. Call load_skill(name) to read the full skill content.",
                 "- When user asks for creative brainstorming, use 'brainstorming' skill",
                 "- When writing implementation plans, use 'writing-plans' skill",
                 "- When debugging systematically, use 'systematic-debugging' skill",
