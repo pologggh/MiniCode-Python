@@ -19,6 +19,7 @@ class InjectedMemory:
     category: str
     relevance_score: float
     source: str  # "search", "tag", "category"
+    memory_id: str | None = None
 
 
 class MemoryInjectionMode(str, Enum):
@@ -282,6 +283,7 @@ class MemoryInjector:
                 category=entry.category,
                 relevance_score=relevance,
                 source=f"{scope_name}_search",
+                memory_id=entry.id,
             ))
 
         # Inject reranker summary as a special memory entry if available
@@ -370,6 +372,7 @@ class MemoryInjector:
                 category=entry.category,
                 relevance_score=relevance,
                 source=f"{scope_name}_failure_recovery",
+                memory_id=entry.id,
             ))
 
         if injected:
@@ -400,7 +403,16 @@ class MemoryInjector:
         lines = ["## Relevant Context from Memory", ""]
 
         for i, mem in enumerate(memories, 1):
-            lines.append(f"{i}. [{mem.category}] {mem.content}")
+            category_tag = mem.category
+            if mem.category == "experience":
+                lower_content = mem.content.lower()
+                if "success_verified" in lower_content:
+                    category_tag = "Verified Experience"
+                elif "failed" in lower_content or "error" in lower_content:
+                    category_tag = "Past Failure Pattern"
+                else:
+                    category_tag = "Experience"
+            lines.append(f"{i}. [{category_tag}] {mem.content}")
 
         lines.append("")
         lines.append("Use the above context to inform your decisions.")
@@ -418,7 +430,9 @@ class MemoryInjector:
 
         # Boost if memory category matches task type
         task_lower = task_description.lower()
-        if entry.category == "architecture" and any(kw in task_lower for kw in ["design", "structure", "api"]):
+        if entry.category == "experience":
+            score += 0.25
+        elif entry.category == "architecture" and any(kw in task_lower for kw in ["design", "structure", "api"]):
             score += 0.2
         elif entry.category == "testing" and any(kw in task_lower for kw in ["test", "assert", "verify"]):
             score += 0.2
@@ -479,6 +493,7 @@ class MemoryInjector:
                             category=entry.category,
                             relevance_score=0.6,  # Tag matches are fairly relevant
                             source=f"{scope.value}_tag",
+                            memory_id=entry.id,
                         ))
 
         return memories[:decision.max_memories]

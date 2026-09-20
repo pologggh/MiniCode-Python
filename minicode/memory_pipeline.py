@@ -72,6 +72,8 @@ class MemoryPipeline:
         # (not the raw query or memory content) so a caller can audit a state
         # transition re-rank without changing the retrieval result contract.
         self._last_graph_trace: dict[str, Any] | None = None
+        from minicode.experience import ExperienceMemoryMetrics
+        self.metrics = ExperienceMemoryMetrics()
 
     # ── Lifecycle ──────────────────────────────────────────────────
 
@@ -584,6 +586,7 @@ class MemoryPipeline:
         self,
         task_description: str,
         execution_trace: list[dict[str, Any]],
+        metadata: dict[str, Any] | None = None,
     ) -> str | None:
         """Write task reflection as structured memory.
 
@@ -607,11 +610,14 @@ class MemoryPipeline:
             if result and result.confidence >= self._reflection.min_confidence:
                 mem_data = result.to_memory_entry()
                 from minicode.memory import MemoryScope
+
+                combined_metadata = {**mem_data.get("metadata", {}), **(metadata or {})}
                 entry = self._memory.add_entry(
                     scope=MemoryScope.PROJECT,
                     category=mem_data["category"],
                     content=mem_data["content"],
                     tags=mem_data["tags"],
+                    metadata=combined_metadata,
                 )
                 # Post-add domain assignment
                 if mem_data.get("domains"):
@@ -627,7 +633,7 @@ class MemoryPipeline:
                         memory_id=entry.id,
                         scope=entry.scope,
                         task_description=task_description,
-                        metadata=mem_data.get("metadata", {}),
+                        metadata=combined_metadata,
                         confidence=result.confidence,
                         execution_trace=execution_trace,
                         persist=False,
@@ -645,6 +651,43 @@ class MemoryPipeline:
 
         self.save_state()
         return None
+
+    def write_experience(
+        self,
+        record: Any,
+        scope: Any = None,
+    ) -> str | None:
+        """Persist structured ExperienceRecord with fingerprint deduplication."""
+        if not self._memory:
+            return None
+
+        from minicode.memory import MemoryScope
+        from minicode.experience import ExperienceRecord, experience_to_memory_entry
+
+        target_scope = scope or MemoryScope.PROJECT
+        if not isinstance(record, ExperienceRecord):
+            return None
+
+        self.metrics.extracted_count += 1
+
+        # Check fingerprint deduplication
+        if record.fingerprint and target_scope in self._memory.memories:
+            for entry in self._memory.memories[target_scope].entries:
+                if entry.metadata and entry.metadata.get("fingerprint") == record.fingerprint:
+                    entry.usage_count += 1
+                    entry.last_accessed = time.time()
+                    entry.updated_at = time.time()
+                    self._memory._save_scope(target_scope)
+                    self.metrics.dedup_count += 1
+                    self.save_state()
+                    return entry.id
+
+        entry = experience_to_memory_entry(record, scope=target_scope)
+        self._memory.memories[target_scope].add_entry(entry)
+        self._memory._save_scope(target_scope)
+        self.metrics.persisted_count += 1
+        self.save_state()
+        return entry.id
 
     # ── FEEDBACK: Close the quality loop (F2) ────────────────────────
 
