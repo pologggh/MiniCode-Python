@@ -60,6 +60,7 @@ class ExperienceRecord:
     lessons_learned: list[str] = field(default_factory=list)
     confidence: float = 0.5
     fingerprint: str = ""
+    task_description: str = ""
     created_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -67,6 +68,7 @@ class ExperienceRecord:
             "task_id": self.task_id,
             "task_type": self.task_type,
             "outcome": self.outcome.value,
+            "task_description": self.task_description,
             "symptom": self.symptom,
             "root_cause": self.root_cause,
             "strategy": self.strategy,
@@ -91,6 +93,7 @@ class ExperienceRecord:
             task_id=data.get("task_id", ""),
             task_type=data.get("task_type", "general"),
             outcome=outcome,
+            task_description=data.get("task_description", ""),
             symptom=data.get("symptom", ""),
             root_cause=data.get("root_cause", ""),
             strategy=data.get("strategy", []),
@@ -313,6 +316,7 @@ class ExperienceExtractor:
             task_id=trace.task_id,
             task_type=task_type,
             outcome=outcome,
+            task_description=trace.task_description,
             symptom=symptom,
             root_cause=root_cause,
             strategy=strategy,
@@ -327,8 +331,10 @@ def format_experience_content(record: ExperienceRecord) -> str:
     """Format an experience record into human-readable memory content."""
     lines = [
         f"Experience [{record.task_type}]: outcome={record.outcome.value}",
-        f"Strategy: {' -> '.join(record.strategy) if record.strategy else 'None'}",
     ]
+    if record.task_description:
+        lines.append(f"Task: {record.task_description}")
+    lines.append(f"Strategy: {' -> '.join(record.strategy) if record.strategy else 'None'}")
     if record.symptom:
         lines.append(f"Symptom: {record.symptom}")
     if record.root_cause:
@@ -349,6 +355,9 @@ def experience_to_memory_entry(
     """Convert an ExperienceRecord into a standard MemoryEntry with metadata."""
     content = format_experience_content(record)
     tags = ["experience", record.task_type, record.outcome.value]
+    if record.task_description:
+        desc_tags = [w.lower() for w in re.findall(r"[A-Za-z0-9_]{3,}", record.task_description)[:5]]
+        tags.extend(desc_tags)
     if record.symptom:
         # Add basic normalized words from symptom as tags
         sym_tags = [w.lower() for w in re.findall(r"[A-Za-z0-9_]{3,}", record.symptom)[:3]]

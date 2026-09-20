@@ -1,0 +1,13 @@
+{
+  "total_test_cases": 7,
+  "extracted_count": 7,
+  "extraction_rate": 1.0,
+  "persisted_count": 4,
+  "rejected_count": 2,
+  "dedup_count": 1,
+  "secret_leaks": 0,
+  "recall_verified_experience": true,
+  "recall_failure_pattern": true,
+  "feedback_loop_accurate": true,
+  "quality_gate_accuracy": 1.0
+}
