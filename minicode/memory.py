@@ -130,6 +130,11 @@ def _validate_entry(entry: Any, index: int) -> tuple[bool, list[str]]:
         if not isinstance(val, int):
             errors.append(f"{prefix} field 'usage_count' must be an integer")
 
+    if "metadata" in entry:
+        val = entry["metadata"]
+        if not isinstance(val, dict):
+            errors.append(f"{prefix} field 'metadata' must be a dictionary")
+
     return len(errors) == 0, errors
 
 
@@ -810,6 +815,7 @@ class MemoryEntry:
     tier: MemoryTier = MemoryTier.SHORT_TERM
     last_accessed: float = field(default_factory=time.time)
     related_to: list[str] = field(default_factory=list)  # Related memory IDs
+    metadata: dict[str, Any] = field(default_factory=dict)
     _cached_tokens: list[str] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
@@ -819,6 +825,8 @@ class MemoryEntry:
         # is injected into every system prompt.
         if not isinstance(self.content, str):
             self.content = "" if self.content is None else str(self.content)
+        if not isinstance(self.metadata, dict):
+            self.metadata = {} if self.metadata is None else dict(self.metadata)
 
     def __hash__(self) -> int:
         return hash(self.id)
@@ -852,6 +860,7 @@ class MemoryEntry:
             "tier": self.tier.value,
             "last_accessed": self.last_accessed,
             "related_to": self.related_to,
+            "metadata": self.metadata,
         }
     
     @classmethod
@@ -870,6 +879,7 @@ class MemoryEntry:
             tier=MemoryTier(data.get("tier", "short_term")),
             last_accessed=data.get("last_accessed", time.time()),
             related_to=data.get("related_to", []),
+            metadata=data.get("metadata", {}) if isinstance(data.get("metadata"), dict) else {},
         )
 
 
@@ -1466,6 +1476,7 @@ class MemoryManager:
         category: str = "auto",
         content: str = "",
         tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> MemoryEntry:
         """Add a new memory entry.
 
@@ -1477,6 +1488,7 @@ class MemoryManager:
             category: Category for the entry, or 'auto' for auto-classification
             content: Content of the memory entry
             tags: Optional list of tags
+            metadata: Optional metadata dictionary
 
         Returns:
             The created MemoryEntry
@@ -1502,6 +1514,7 @@ class MemoryManager:
             category=final_category,
             content=content,
             tags=final_tags,
+            metadata=metadata or {},
         )
 
         self.memories[scope].add_entry(entry)
