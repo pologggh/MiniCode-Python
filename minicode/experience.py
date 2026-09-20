@@ -205,11 +205,12 @@ class ExperienceExtractor:
     """Deterministic, rule-based experience extractor."""
 
     _TASK_KEYWORDS = {
-        "bug_fix": ("fix", "bug", "error", "issue", "crash", "traceback", "exception", "failed"),
-        "test_failure": ("test", "pytest", "assert", "fail", "broken test"),
-        "dependency_issue": ("import", "module", "requirement", "pip", "package", "not found"),
+        "dependency_issue": ("dependency", "modulenotfound", "no module named", "requirement", "pip", "package", "not found", "import"),
+        "test_failure": ("broken test", "test fail", "failing test"),
         "refactoring": ("refactor", "cleanup", "clean up", "rename", "restructure"),
         "feature_impl": ("add", "implement", "create", "support", "new feature"),
+        "exploration": ("explore", "investigate", "inspect", "browse"),
+        "bug_fix": ("fix", "bug", "error", "issue", "crash", "traceback", "exception", "failed"),
     }
 
     def classify_task_type(self, description: str, tool_seq: list[str]) -> str:

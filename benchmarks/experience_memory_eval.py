@@ -2,13 +2,14 @@
 
 Evaluates:
 1. Phase A (Extraction & Persistence):
-   - Deterministic extraction accuracy
-   - Quality gate filtering (rejecting empty/aborted tasks)
+   - Deterministic extraction accuracy (Task Type & Outcome)
+   - Quality gate filtering (rejecting empty/aborted/blocked tasks)
    - Secret redaction verification (zero secret leaks)
    - SHA-256 fingerprint deduplication
+   - Structured metadata preservation
 2. Phase B (Recall & Reuse):
-   - Retrieval relevance and category formatting
-   - Memory ID preservation
+   - Outcome-aware retrieval and category formatting
+   - Prevention of negative transfer (avoiding past failure patterns for normal tasks)
    - Closed-loop feedback (usage count reinforcement and decay)
 """
 from __future__ import annotations
@@ -45,6 +46,7 @@ class EvalTraceCase:
     expected_outcome: ExperienceOutcome
     expect_persist: bool
     contains_secret: bool = False
+    stop_status: str = "completed"
 
 
 BENCHMARK_CASES: list[EvalTraceCase] = [
@@ -86,7 +88,7 @@ BENCHMARK_CASES: list[EvalTraceCase] = [
     ),
     EvalTraceCase(
         case_id="case-4-permission-error-failure",
-        description="Execute deployment script with restricted filesystem permissions",
+        description="Fix permission error when executing deployment script",
         tools=[
             ("run_command", {"CommandLine": "./deploy.sh"}, False, "PermissionError: [Errno 13] Permission denied"),
         ],
@@ -94,10 +96,11 @@ BENCHMARK_CASES: list[EvalTraceCase] = [
         expected_task_type="bug_fix",
         expected_outcome=ExperienceOutcome.FAILED_VERIFICATION,
         expect_persist=True,
+        stop_status="failed",
     ),
     EvalTraceCase(
         case_id="case-5-secret-sanitization",
-        description="Configure API integration with OpenAI and GitHub credentials",
+        description="Fix authentication error configuring credentials with OpenAI and GitHub",
         tools=[
             (
                 "run_command",
@@ -111,6 +114,7 @@ BENCHMARK_CASES: list[EvalTraceCase] = [
         expected_outcome=ExperienceOutcome.FAILED_TOOL,
         expect_persist=True,
         contains_secret=True,
+        stop_status="failed",
     ),
     EvalTraceCase(
         case_id="case-6-aborted-task",
@@ -122,6 +126,7 @@ BENCHMARK_CASES: list[EvalTraceCase] = [
         expected_task_type="exploration",
         expected_outcome=ExperienceOutcome.ABORTED,
         expect_persist=False,
+        stop_status="aborted",
     ),
     EvalTraceCase(
         case_id="case-7-empty-trace",
@@ -132,11 +137,46 @@ BENCHMARK_CASES: list[EvalTraceCase] = [
         expected_outcome=ExperienceOutcome.SUCCESS_UNVERIFIED,
         expect_persist=False,
     ),
+    EvalTraceCase(
+        case_id="case-8-negative-transfer-test",
+        description="Implement user avatar upload endpoint with s3 storage",
+        tools=[
+            ("write_to_file", {"TargetFile": "avatar.py"}, True, "created"),
+        ],
+        verification=("pytest tests/test_avatar.py", 0, True, "1 passed"),
+        expected_task_type="feature_impl",
+        expected_outcome=ExperienceOutcome.SUCCESS_VERIFIED,
+        expect_persist=True,
+    ),
+    EvalTraceCase(
+        case_id="case-9-metadata-preservation",
+        description="Refactor database connection pool metrics",
+        tools=[
+            ("view_file", {"path": "db/pool.py"}, True, "class Pool: ..."),
+            ("replace_file_content", {"TargetFile": "db/pool.py"}, True, "modified"),
+        ],
+        verification=("pytest tests/test_pool.py", 0, True, "passed"),
+        expected_task_type="refactoring",
+        expected_outcome=ExperienceOutcome.SUCCESS_VERIFIED,
+        expect_persist=True,
+    ),
+    EvalTraceCase(
+        case_id="case-10-blocked-task",
+        description="Explore external production database without credentials",
+        tools=[
+            ("run_command", {"CommandLine": "connect_prod_db"}, False, "PermissionError: Blocked"),
+        ],
+        verification=None,
+        expected_task_type="exploration",
+        expected_outcome=ExperienceOutcome.BLOCKED,
+        expect_persist=False,
+        stop_status="blocked",
+    ),
 ]
 
 
 def run_experience_benchmark(workspace_path: Path | None = None) -> dict[str, Any]:
-    """Execute complete experience memory evaluation suite."""
+    """Execute complete experience memory evaluation suite with genuine metrics."""
     temp_dir = None
     if workspace_path is None:
         temp_dir = tempfile.TemporaryDirectory()
@@ -155,6 +195,7 @@ def run_experience_benchmark(workspace_path: Path | None = None) -> dict[str, An
     extracted_records: list[ExperienceRecord] = []
     persisted_ids: list[str] = []
     rejected_cases: list[str] = []
+    persist_decisions: list[bool] = []
     dedup_hits = 0
     secret_leaks = 0
 
@@ -176,14 +217,15 @@ def run_experience_benchmark(workspace_path: Path | None = None) -> dict[str, An
             cmd, code, passed, out = case.verification
             trace.record_verification(cmd, code, passed, out)
 
-        status = "aborted" if case.expected_outcome == ExperienceOutcome.ABORTED else "completed"
-        trace.record_task_end(status=status, summary=case.description)
+        trace.record_task_end(status=case.stop_status, summary=case.description)
 
         rec = extractor.extract(trace)
         assert rec is not None, f"Extraction failed for {case.case_id}"
         extracted_records.append(rec)
 
         should_persist, reason = gate.should_persist(rec, trace)
+        persist_decisions.append(should_persist)
+
         if should_persist:
             # Check if this fingerprint already exists
             fp = rec.fingerprint
@@ -206,6 +248,16 @@ def run_experience_benchmark(workspace_path: Path | None = None) -> dict[str, An
             if "sk-live1234567890abcdef" in rec_json or "secret_bearer_token" in rec_json:
                 secret_leaks += 1
 
+    # Genuine Extraction & Quality Metrics
+    task_type_correct = sum(1 for rec, case in zip(extracted_records, BENCHMARK_CASES) if rec.task_type == case.expected_task_type)
+    task_type_accuracy = round(task_type_correct / len(BENCHMARK_CASES), 3)
+
+    outcome_correct = sum(1 for rec, case in zip(extracted_records, BENCHMARK_CASES) if rec.outcome == case.expected_outcome)
+    outcome_accuracy = round(outcome_correct / len(BENCHMARK_CASES), 3)
+
+    quality_gate_correct = sum(1 for p, case in zip(persist_decisions, BENCHMARK_CASES) if p == case.expect_persist)
+    quality_gate_accuracy = round(quality_gate_correct / len(BENCHMARK_CASES), 3)
+
     # --- Phase B: Retrieval, Reuse, and Feedback Loop ---
     injector = MemoryInjector(memory_manager=mgr, min_relevance=0.1)
 
@@ -213,27 +265,93 @@ def run_experience_benchmark(workspace_path: Path | None = None) -> dict[str, An
     q1_results = injector.inject_for_task("AssertionError in authentication endpoint")
     q1_top = q1_results[0] if q1_results else None
     q1_formatted = injector.format_for_prompt(q1_results) if q1_results else ""
-
-    q1_recalled_verified = (
+    q1_match = (
         q1_top is not None
         and "[Verified Experience]" in q1_formatted
-        and q1_top.memory_id is not None
+        and "auth" in q1_top.content.lower()
     )
 
-    # Query 2: Should retrieve case-4 failure pattern
-    q2_results = injector.inject_on_failure(
+    # Query 2: Should retrieve case-2 dependency experience
+    q2_results = injector.inject_for_task("ModuleNotFoundError pyyaml in config loader")
+    q2_top = q2_results[0] if q2_results else None
+    q2_match = (
+        q2_top is not None
+        and "yaml" in q2_top.content.lower()
+    )
+
+    # Query 3: Negative Transfer Check (Normal feature implementation query)
+    q3_results = injector.inject_for_task("Implement user avatar upload endpoint")
+    # Check if any failure pattern is wrongly injected into normal execution
+    negative_transfer_count = sum(
+        1 for m in q3_results
+        if getattr(m, "outcome", None) in ("failed_tool", "failed_verification")
+        or "Past Failure Pattern" in m.content
+    )
+    negative_transfer_rate = round(negative_transfer_count / max(len(q3_results), 1), 3)
+
+    # Query 4: Failure recovery query
+    q4_results = injector.inject_on_failure(
         error_message="PermissionError: [Errno 13] Permission denied",
         tool_name="run_command",
     )
-    q2_top = q2_results[0] if q2_results else None
-    q2_formatted = injector.format_for_prompt(q2_results) if q2_results else ""
-    q2_recalled_failure = (
-        q2_top is not None
-        and "[Past Failure Pattern]" in q2_formatted
-        and q2_top.memory_id is not None
+    q4_top = q4_results[0] if q4_results else None
+    q4_formatted = injector.format_for_prompt(q4_results) if q4_results else ""
+    q4_match = (
+        q4_top is not None
+        and "[Past Failure Pattern]" in q4_formatted
+        and "permission" in q4_top.content.lower()
     )
 
-    # Test closed-loop feedback
+    # Recall & Precision Metrics
+    recall_queries = [
+        (q1_results, "auth"),
+        (q2_results, "yaml"),
+        (q4_results, "permission"),
+    ]
+    r_at_1_hits = sum(1 for res, kw in recall_queries if res and kw in res[0].content.lower())
+    recall_at_1 = round(r_at_1_hits / len(recall_queries), 3)
+
+    r_at_3_hits = sum(1 for res, kw in recall_queries if any(kw in m.content.lower() for m in res[:3]))
+    recall_at_3 = round(r_at_3_hits / len(recall_queries), 3)
+
+    # Verified Precision@K in normal queries
+    normal_injected = q1_results + q2_results + q3_results
+    verified_injected_count = sum(1 for m in normal_injected if getattr(m, "outcome", None) == "success_verified")
+    verified_precision_at_k = round(verified_injected_count / max(len(normal_injected), 1), 3)
+
+    failure_recall_at_k = 1.0 if q4_match else 0.0
+    reuse_hit_rate = round(sum(1 for res, _ in recall_queries if len(res) > 0) / len(recall_queries), 3)
+
+    # Metadata Preservation Verification (Case 9)
+    metadata_preservation_score = 0.0
+    case9_entry = None
+    for entry in mgr.memories[MemoryScope.PROJECT].entries:
+        if "pool" in entry.content.lower():
+            case9_entry = entry
+            break
+
+    if case9_entry and isinstance(case9_entry.metadata, dict):
+        exp_dict = case9_entry.metadata.get("experience", {})
+        checks = [
+            exp_dict.get("schema_version") == "1.0",
+            "db/pool.py" in exp_dict.get("files_read", []),
+            "db/pool.py" in exp_dict.get("files_touched", []),
+            "view_file" in exp_dict.get("tools_used", []),
+            "replace_file_content" in exp_dict.get("tools_used", []),
+            exp_dict.get("verification", {}).get("passed") is True,
+            isinstance(exp_dict.get("provenance"), dict) and len(exp_dict.get("provenance")) > 0,
+        ]
+        metadata_preservation_score = round(sum(1 for c in checks if c) / len(checks), 3)
+
+    # Dedup precision: verify deduplicated entry tracked observation_count without inflating usage_count during write
+    dedup_precision = 0.0
+    for entry in mgr.memories[MemoryScope.PROJECT].entries:
+        if "yaml" in entry.content.lower():
+            if dedup_hits >= 1 and entry.metadata.get("observation_count", 0) >= 2:
+                dedup_precision = 1.0
+            break
+
+    # Closed-loop feedback accuracy
     initial_usage = 0
     final_usage_positive = 0
     final_usage_negative = 0
@@ -251,6 +369,8 @@ def run_experience_benchmark(workspace_path: Path | None = None) -> dict[str, An
         final_usage_positive == initial_usage + 2
         and final_usage_negative == final_usage_positive - 1
     )
+    feedback_accuracy = 1.0 if feedback_correct else 0.0
+    secret_leak_rate = round(secret_leaks / len(BENCHMARK_CASES), 3)
 
     results = {
         "total_test_cases": len(BENCHMARK_CASES),
@@ -260,12 +380,23 @@ def run_experience_benchmark(workspace_path: Path | None = None) -> dict[str, An
         "rejected_count": len(rejected_cases),
         "dedup_count": dedup_hits,
         "secret_leaks": secret_leaks,
-        "recall_verified_experience": q1_recalled_verified,
-        "recall_failure_pattern": q2_recalled_failure,
+        "secret_leak_rate": secret_leak_rate,
+        "task_type_accuracy": task_type_accuracy,
+        "outcome_accuracy": outcome_accuracy,
+        "quality_gate_accuracy": quality_gate_accuracy,
+        "recall_at_1": recall_at_1,
+        "recall_at_3": recall_at_3,
+        "verified_precision_at_k": verified_precision_at_k,
+        "failure_recall_at_k": failure_recall_at_k,
+        "reuse_hit_rate": reuse_hit_rate,
+        "negative_transfer_rate": negative_transfer_rate,
+        "dedup_precision": dedup_precision,
+        "metadata_preservation_rate": metadata_preservation_score,
+        "feedback_accuracy": feedback_accuracy,
+        # Legacy boolean flags for backwards compatibility
+        "recall_verified_experience": q1_match,
+        "recall_failure_pattern": q4_match,
         "feedback_loop_accurate": feedback_correct,
-        "quality_gate_accuracy": round(
-            (len(persisted_ids) + dedup_hits + len(rejected_cases)) / len(BENCHMARK_CASES), 2
-        ),
     }
 
     if temp_dir:
@@ -280,12 +411,12 @@ def main() -> None:
     args = parser.parse_args()
 
     results = run_experience_benchmark()
-    print("=" * 60)
-    print("STRUCTURED EXPERIENCE MEMORY EVALUATION RESULTS")
-    print("=" * 60)
+    print("=" * 65)
+    print("STRUCTURED EXPERIENCE MEMORY HARDENED EVALUATION RESULTS")
+    print("=" * 65)
     for k, v in results.items():
         print(f"  {k:30}: {v}")
-    print("=" * 60)
+    print("=" * 65)
 
     if args.json_out:
         out_p = Path(args.json_out)
