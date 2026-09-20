@@ -662,30 +662,39 @@ class MemoryPipeline:
             return None
 
         from minicode.memory import MemoryScope
-        from minicode.experience import ExperienceRecord, experience_to_memory_entry
+        from minicode.experience import ExperienceRecord, ExperienceOutcome, experience_to_memory_entry
 
         target_scope = scope or MemoryScope.PROJECT
         if not isinstance(record, ExperienceRecord):
             return None
 
-        self.metrics.extracted_count += 1
+        self.metrics.experiences_extracted += 1
 
         # Check fingerprint deduplication
         if record.fingerprint and target_scope in self._memory.memories:
             for entry in self._memory.memories[target_scope].entries:
                 if entry.metadata and entry.metadata.get("fingerprint") == record.fingerprint:
-                    entry.usage_count += 1
+                    if not isinstance(entry.metadata, dict):
+                        entry.metadata = {}
+                    obs = entry.metadata.get("observation_count", 1) + 1
+                    entry.metadata["observation_count"] = obs
+                    if "experience" in entry.metadata and isinstance(entry.metadata["experience"], dict):
+                        entry.metadata["experience"]["observation_count"] = obs
                     entry.last_accessed = time.time()
                     entry.updated_at = time.time()
                     self._memory._save_scope(target_scope)
-                    self.metrics.dedup_count += 1
+                    self.metrics.dedup_hits += 1
                     self.save_state()
                     return entry.id
 
         entry = experience_to_memory_entry(record, scope=target_scope)
         self._memory.memories[target_scope].add_entry(entry)
         self._memory._save_scope(target_scope)
-        self.metrics.persisted_count += 1
+        self.metrics.experiences_persisted += 1
+        if record.outcome == ExperienceOutcome.SUCCESS_VERIFIED:
+            self.metrics.verified_success_count += 1
+        elif record.outcome in (ExperienceOutcome.FAILED_TOOL, ExperienceOutcome.FAILED_VERIFICATION):
+            self.metrics.failure_experience_count += 1
         self.save_state()
         return entry.id
 
@@ -703,6 +712,11 @@ class MemoryPipeline:
         """
         if not self._memory or not injected_memory_ids:
             return
+
+        if task_success:
+            self.metrics.feedback_positive += 1
+        else:
+            self.metrics.feedback_negative += 1
 
         from minicode.memory import MemoryScope
         changed_scopes: set[MemoryScope] = set()

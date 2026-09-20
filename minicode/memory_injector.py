@@ -20,6 +20,7 @@ class InjectedMemory:
     relevance_score: float
     source: str  # "search", "tag", "category"
     memory_id: str | None = None
+    outcome: str | None = None
 
 
 class MemoryInjectionMode(str, Enum):
@@ -156,6 +157,7 @@ class MemoryInjector:
         self._injection_cooldown: float = injection_cooldown if injection_cooldown is not None else 30.0
         self._task_hash: str = ""
         self._cached_result: list[InjectedMemory] = []
+        self._last_injected_memories: list[InjectedMemory] = []
         self._last_rerank_result: Any = None
 
     @staticmethod
@@ -203,6 +205,7 @@ class MemoryInjector:
 
         # Cache check: return cached result for identical tasks (after cooldown)
         if task_hash == self._task_hash and self._cached_result:
+            self._last_injected_memories = self._cached_result.copy()
             return self._cached_result.copy()
 
         self._last_query = task_description
@@ -278,12 +281,17 @@ class MemoryInjector:
                 continue
             seen_content.add(content_key)
 
+            exp_outcome = None
+            if isinstance(entry.metadata, dict):
+                exp_outcome = entry.metadata.get("experience", {}).get("outcome") or entry.metadata.get("outcome")
+
             injected.append(InjectedMemory(
                 content=content,
                 category=entry.category,
                 relevance_score=relevance,
                 source=f"{scope_name}_search",
                 memory_id=entry.id,
+                outcome=exp_outcome,
             ))
 
         # Inject reranker summary as a special memory entry if available
@@ -311,6 +319,7 @@ class MemoryInjector:
 
         self._task_hash = task_hash
         self._cached_result = injected.copy()
+        self._last_injected_memories = injected.copy()
         return injected
 
     def inject_on_failure(
@@ -361,18 +370,26 @@ class MemoryInjector:
                     relevance += 0.2
                 if tool_name in entry.content.lower():
                     relevance += 0.15
+                if isinstance(entry.metadata, dict) and entry.category == "experience":
+                    exp_outcome = entry.metadata.get("experience", {}).get("outcome")
+                    if exp_outcome in ("failed_tool", "failed_verification"):
+                        relevance += 0.25  # Boost past failure patterns during error recovery
                 memories.append((relevance, entry, scope.value))
 
         memories.sort(key=lambda x: x[0], reverse=True)
 
         injected: list[InjectedMemory] = []
         for relevance, entry, scope_name in memories[:decision.max_memories]:
+            exp_outcome = None
+            if isinstance(entry.metadata, dict):
+                exp_outcome = entry.metadata.get("experience", {}).get("outcome") or entry.metadata.get("outcome")
             injected.append(InjectedMemory(
                 content=entry.content[:decision.max_tokens_per_memory * 4],
                 category=entry.category,
                 relevance_score=relevance,
                 source=f"{scope_name}_failure_recovery",
                 memory_id=entry.id,
+                outcome=exp_outcome,
             ))
 
         if injected:
@@ -382,11 +399,20 @@ class MemoryInjector:
                 tool_name,
             )
 
+        self._last_injected_memories = injected.copy()
         return injected
 
     @property
     def last_decision(self) -> MemoryInjectionDecision | None:
         return self._last_decision
+
+    @property
+    def last_injected_memories(self) -> list[InjectedMemory]:
+        return list(self._last_injected_memories)
+
+    @property
+    def last_injected_memory_ids(self) -> list[str]:
+        return [m.memory_id for m in self._last_injected_memories if m.memory_id]
 
     def format_for_prompt(self, memories: list[InjectedMemory]) -> str:
         """Format injected memories for inclusion in system prompt.
@@ -405,13 +431,20 @@ class MemoryInjector:
         for i, mem in enumerate(memories, 1):
             category_tag = mem.category
             if mem.category == "experience":
-                lower_content = mem.content.lower()
-                if "success_verified" in lower_content:
+                if mem.outcome == "success_verified":
                     category_tag = "Verified Experience"
-                elif "failed" in lower_content or "error" in lower_content:
+                elif mem.outcome in ("failed_tool", "failed_verification"):
                     category_tag = "Past Failure Pattern"
+                elif mem.outcome == "success_unverified":
+                    category_tag = "Unverified Experience"
                 else:
-                    category_tag = "Experience"
+                    lower_content = mem.content.lower()
+                    if "success_verified" in lower_content:
+                        category_tag = "Verified Experience"
+                    elif "failed" in lower_content or "error" in lower_content:
+                        category_tag = "Past Failure Pattern"
+                    else:
+                        category_tag = "Experience"
             lines.append(f"{i}. [{category_tag}] {mem.content}")
 
         lines.append("")
@@ -431,7 +464,16 @@ class MemoryInjector:
         # Boost if memory category matches task type
         task_lower = task_description.lower()
         if entry.category == "experience":
-            score += 0.25
+            exp_meta = entry.metadata.get("experience", {}) if isinstance(entry.metadata, dict) else {}
+            outcome = exp_meta.get("outcome") or ""
+            if outcome == "success_verified":
+                score += 0.25
+            elif outcome == "success_unverified":
+                score += 0.10
+            elif outcome in ("failed_tool", "failed_verification"):
+                score -= 0.15  # Penalize failure experiences during normal execution to avoid negative transfer
+            else:
+                score += 0.10
         elif entry.category == "architecture" and any(kw in task_lower for kw in ["design", "structure", "api"]):
             score += 0.2
         elif entry.category == "testing" and any(kw in task_lower for kw in ["test", "assert", "verify"]):
@@ -488,12 +530,16 @@ class MemoryInjector:
                     content_key = entry.content[:100].lower()
                     if content_key not in seen:
                         seen.add(content_key)
+                        exp_outcome = None
+                        if isinstance(entry.metadata, dict):
+                            exp_outcome = entry.metadata.get("experience", {}).get("outcome") or entry.metadata.get("outcome")
                         memories.append(InjectedMemory(
                             content=entry.content[:decision.max_tokens_per_memory * 4],
                             category=entry.category,
                             relevance_score=0.6,  # Tag matches are fairly relevant
                             source=f"{scope.value}_tag",
                             memory_id=entry.id,
+                            outcome=exp_outcome,
                         ))
 
         return memories[:decision.max_memories]

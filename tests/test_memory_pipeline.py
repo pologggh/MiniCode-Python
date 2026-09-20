@@ -48,8 +48,8 @@ def test_memory_pipeline_write_experience_and_deduplication(tmp_path: Path):
     assert mem_id2 == mem_id
     assert pipeline.metrics.persisted_count == 1
     assert pipeline.metrics.dedup_count == 1
-    assert len(mgr.memories[MemoryScope.PROJECT].entries) == 1
-    assert mgr.memories[MemoryScope.PROJECT].entries[0].usage_count == 1
+    assert mgr.memories[MemoryScope.PROJECT].entries[0].usage_count == 0
+    assert mgr.memories[MemoryScope.PROJECT].entries[0].metadata["observation_count"] == 2
 
 
 def test_memory_pipeline_feedback_loop(tmp_path: Path):

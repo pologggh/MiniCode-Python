@@ -62,9 +62,16 @@ class ExperienceRecord:
     fingerprint: str = ""
     task_description: str = ""
     created_at: float = field(default_factory=time.time)
+    schema_version: str = "1.0"
+    tools_used: list[str] = field(default_factory=list)
+    files_read: list[str] = field(default_factory=list)
+    files_touched: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    provenance: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": self.schema_version,
             "task_id": self.task_id,
             "task_type": self.task_type,
             "outcome": self.outcome.value,
@@ -77,6 +84,11 @@ class ExperienceRecord:
             "confidence": round(self.confidence, 3),
             "fingerprint": self.fingerprint,
             "created_at": self.created_at,
+            "tools_used": self.tools_used,
+            "files_read": self.files_read,
+            "files_touched": self.files_touched,
+            "errors": self.errors,
+            "provenance": self.provenance,
         }
 
     @classmethod
@@ -102,6 +114,12 @@ class ExperienceRecord:
             confidence=data.get("confidence", 0.5),
             fingerprint=data.get("fingerprint", ""),
             created_at=data.get("created_at", time.time()),
+            schema_version=data.get("schema_version", "1.0"),
+            tools_used=data.get("tools_used", []),
+            files_read=data.get("files_read", []),
+            files_touched=data.get("files_touched", []),
+            errors=data.get("errors", []),
+            provenance=data.get("provenance", {}),
         )
 
 
@@ -110,14 +128,27 @@ def compute_experience_fingerprint(
     symptom: str,
     root_cause: str,
     outcome: str,
+    task_description: str = "",
+    files_touched: list[str] | None = None,
+    strategy: list[str] | None = None,
 ) -> str:
-    """Compute SHA-256 fingerprint for deduplicating identical experiences."""
+    """Compute SHA-256 fingerprint for deduplicating identical experiences.
+
+    Incorporates task_description, files_touched, and strategy fallback when
+    symptom and root_cause are empty to avoid over-merging distinct tasks.
+    """
     norm_type = task_type.strip().lower()
     norm_sym = re.sub(r"\s+", " ", symptom.strip().lower())
     norm_root = re.sub(r"\s+", " ", root_cause.strip().lower())
     norm_out = outcome.strip().lower()
 
-    content = f"{norm_type}|{norm_sym}|{norm_root}|{norm_out}"
+    if not norm_sym and not norm_root:
+        norm_desc = re.sub(r"\s+", " ", task_description.strip().lower())
+        norm_files = ",".join(sorted(files_touched or []))
+        norm_strat = ",".join(strategy or [])
+        content = f"{norm_type}|{norm_desc}|{norm_files}|{norm_strat}|{norm_out}"
+    else:
+        content = f"{norm_type}|{norm_sym}|{norm_root}|{norm_out}"
     return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
 
@@ -142,9 +173,9 @@ class ExperienceQualityGate:
         if not tool_seq and not trace.verification_results:
             return False, "Trace contains no tool executions or verification results"
 
-        # Rule 2: Reject trivial aborted tasks
-        if record.outcome == ExperienceOutcome.ABORTED:
-            return False, "Aborted task without actionable insight"
+        # Rule 2: Reject trivial aborted or blocked tasks
+        if record.outcome in (ExperienceOutcome.ABORTED, ExperienceOutcome.BLOCKED):
+            return False, f"{record.outcome.value.capitalize()} task without actionable insight"
 
         # Rule 3: For failed tasks, require a captured symptom
         if record.outcome in (ExperienceOutcome.FAILED_TOOL, ExperienceOutcome.FAILED_VERIFICATION):
@@ -198,25 +229,29 @@ class ExperienceExtractor:
 
     def classify_outcome(self, trace: ExecutionTrace) -> ExperienceOutcome:
         """Deterministically determine outcome from trace execution results."""
-        if trace.status == "aborted":
+        status_lower = (trace.status or "").lower()
+        if status_lower in ("aborted", "cancelled"):
             return ExperienceOutcome.ABORTED
+        if status_lower == "blocked":
+            return ExperienceOutcome.BLOCKED
 
-        # Check verification results first (most authoritative)
-        has_passed_verif = any(v.get("passed") is True for v in trace.verification_results)
-        has_failed_verif = any(v.get("passed") is False for v in trace.verification_results)
-
-        if has_passed_verif:
-            return ExperienceOutcome.SUCCESS_VERIFIED
-
-        if has_failed_verif:
-            return ExperienceOutcome.FAILED_VERIFICATION
+        # Check verification results first (terminal verification is authoritative)
+        if trace.verification_results:
+            last_verif = trace.verification_results[-1]
+            if last_verif.get("passed") is True:
+                return ExperienceOutcome.SUCCESS_VERIFIED
+            elif last_verif.get("passed") is False:
+                return ExperienceOutcome.FAILED_VERIFICATION
 
         # Check tool execution results
         errors = trace.get_errors()
-        if errors and trace.status not in ("completed", "success"):
+        if status_lower in ("completed", "success"):
+            return ExperienceOutcome.SUCCESS_UNVERIFIED
+
+        if errors:
             return ExperienceOutcome.FAILED_TOOL
 
-        if trace.status in ("completed", "success") or (trace.events and not errors):
+        if trace.events:
             return ExperienceOutcome.SUCCESS_UNVERIFIED
 
         return ExperienceOutcome.FAILED_TOOL
@@ -305,11 +340,27 @@ class ExperienceExtractor:
         elif outcome == ExperienceOutcome.SUCCESS_UNVERIFIED:
             lessons.append(f"Completed {task_type} via [{', '.join(strategy)}], pending formal verification.")
 
+        # Extract provenance and file interactions
+        files_read = trace.get_files_read() if hasattr(trace, "get_files_read") else []
+        files_touched = trace.get_files_touched() if hasattr(trace, "get_files_touched") else []
+        tools_used = trace.get_tool_sequence()
+        errors = trace.get_errors()
+        provenance = {
+            "session_id": getattr(trace, "session_id", ""),
+            "task_id": getattr(trace, "task_id", ""),
+            "workspace": getattr(trace, "workspace", ""),
+            "duration": trace.metrics.get("duration", 0) if getattr(trace, "metrics", None) else 0,
+            "timestamp": getattr(trace, "start_time", time.time()),
+        }
+
         fingerprint = compute_experience_fingerprint(
             task_type=task_type,
             symptom=symptom,
             root_cause=root_cause,
             outcome=outcome.value,
+            task_description=trace.task_description,
+            files_touched=files_touched,
+            strategy=strategy,
         )
 
         return ExperienceRecord(
@@ -324,6 +375,11 @@ class ExperienceExtractor:
             lessons_learned=lessons,
             confidence=confidence,
             fingerprint=fingerprint,
+            tools_used=tools_used,
+            files_read=files_read,
+            files_touched=files_touched,
+            errors=errors,
+            provenance=provenance,
         )
 
 
@@ -380,11 +436,72 @@ def experience_to_memory_entry(
 @dataclass
 class ExperienceMemoryMetrics:
     """Metrics tracking experience lifecycle."""
-    extracted_count: int = 0
-    persisted_count: int = 0
-    rejected_count: int = 0
-    dedup_count: int = 0
-    reused_count: int = 0
+    experiences_extracted: int = 0
+    experiences_persisted: int = 0
+    experiences_rejected: int = 0
+    verified_success_count: int = 0
+    failure_experience_count: int = 0
+    experience_retrieval_count: int = 0
+    experience_injection_count: int = 0
+    feedback_positive: int = 0
+    feedback_negative: int = 0
+    dedup_hits: int = 0
+
+    @property
+    def extracted_count(self) -> int:
+        return self.experiences_extracted
+
+    @extracted_count.setter
+    def extracted_count(self, v: int) -> None:
+        self.experiences_extracted = v
+
+    @property
+    def persisted_count(self) -> int:
+        return self.experiences_persisted
+
+    @persisted_count.setter
+    def persisted_count(self, v: int) -> None:
+        self.experiences_persisted = v
+
+    @property
+    def rejected_count(self) -> int:
+        return self.experiences_rejected
+
+    @rejected_count.setter
+    def rejected_count(self, v: int) -> None:
+        self.experiences_rejected = v
+
+    @property
+    def dedup_count(self) -> int:
+        return self.dedup_hits
+
+    @dedup_count.setter
+    def dedup_count(self, v: int) -> None:
+        self.dedup_hits = v
+
+    @property
+    def reused_count(self) -> int:
+        return self.experience_retrieval_count
+
+    @reused_count.setter
+    def reused_count(self, v: int) -> None:
+        self.experience_retrieval_count = v
 
     def to_dict(self) -> dict[str, int]:
-        return asdict(self)
+        return {
+            "experiences_extracted": self.experiences_extracted,
+            "experiences_persisted": self.experiences_persisted,
+            "experiences_rejected": self.experiences_rejected,
+            "verified_success_count": self.verified_success_count,
+            "failure_experience_count": self.failure_experience_count,
+            "experience_retrieval_count": self.experience_retrieval_count,
+            "experience_injection_count": self.experience_injection_count,
+            "feedback_positive": self.feedback_positive,
+            "feedback_negative": self.feedback_negative,
+            "dedup_hits": self.dedup_hits,
+            "extracted_count": self.experiences_extracted,
+            "persisted_count": self.experiences_persisted,
+            "rejected_count": self.experiences_rejected,
+            "dedup_count": self.dedup_hits,
+            "reused_count": self.experience_retrieval_count,
+        }
