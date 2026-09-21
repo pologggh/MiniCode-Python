@@ -33,10 +33,17 @@ class LayerContent:
     priority: int = 0
     timestamp: float = field(default_factory=time.time)
     source: str = ""
+    overflow: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return {"text": self.text, "tokens": self.tokens,
-                "priority": self.priority, "timestamp": self.timestamp, "source": self.source}
+        return {
+            "text": self.text,
+            "tokens": self.tokens,
+            "priority": self.priority,
+            "timestamp": self.timestamp,
+            "source": self.source,
+            "overflow": self.overflow,
+        }
 
 
 @dataclass
@@ -46,6 +53,26 @@ class ContextBudget:
     project_ratio: float = 0.25
     session_ratio: float = 0.45
     scratchpad_ratio: float = 0.15
+
+    @classmethod
+    def from_effective_input(
+        cls,
+        effective_input: int,
+        safety_margin: float = 0.05,
+        system_ratio: float = 0.15,
+        project_ratio: float = 0.25,
+        session_ratio: float = 0.45,
+        scratchpad_ratio: float = 0.15,
+    ) -> ContextBudget:
+        """Derive dynamic layered context budget from model effective input."""
+        total_limit = max(1000, int(effective_input * (1.0 - safety_margin)))
+        return cls(
+            total_limit=total_limit,
+            system_ratio=system_ratio,
+            project_ratio=project_ratio,
+            session_ratio=session_ratio,
+            scratchpad_ratio=scratchpad_ratio,
+        )
 
     @property
     def system_limit(self) -> int:
@@ -81,6 +108,7 @@ class LayeredContext:
             ContextLayer.SYSTEM: 0, ContextLayer.PROJECT: 0,
             ContextLayer.SESSION: 0, ContextLayer.SCRATCHPAD: 0,
         }
+        self._trim_history: list[dict[str, Any]] = []
 
     def add(self, layer: ContextLayer, text: str, tokens: int | None = None,
             priority: int = 0, source: str = "") -> None:
@@ -123,6 +151,18 @@ class LayeredContext:
     def get_layer_tokens(self, layer: ContextLayer) -> int:
         return self._layer_tokens[layer]
 
+    def get_overflow_items(self) -> list[LayerContent]:
+        """Return all items across layers that exceeded their layer budget."""
+        overflows: list[LayerContent] = []
+        for contents in self._layers.values():
+            for c in contents:
+                if getattr(c, "overflow", False):
+                    overflows.append(c)
+        return overflows
+
+    def get_trim_history(self) -> list[dict[str, Any]]:
+        return list(self._trim_history)
+
     def _trim_layer(self, layer: ContextLayer) -> None:
         limit = self.budget.get_limit(layer)
         contents = self._layers[layer]
@@ -136,10 +176,11 @@ class LayeredContext:
                 kept.append(content)
                 total += content.tokens
             elif not kept:
-                # First item exceeds budget: keep truncated version
-                content.tokens = limit
+                # First item exceeds budget: do NOT fake token count while leaving text giant.
+                # Mark overflow=True, preserve true token accounting, and allow policy layer to handle.
+                content.overflow = True
                 kept.append(content)
-                total = limit
+                total += content.tokens
                 break
         kept_ids = {id(c) for c in kept}
         self._layers[layer] = [c for c in contents if id(c) in kept_ids]
@@ -147,6 +188,11 @@ class LayeredContext:
         removed = len(contents) - len(kept)
         if removed > 0:
             logger.debug("Trimmed %d items from %s layer", removed, layer.value)
+            self._trim_history.append({
+                "layer": layer.value,
+                "removed_count": removed,
+                "timestamp": time.time(),
+            })
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:
