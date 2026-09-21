@@ -1,94 +1,171 @@
 {
-  "benchmark": "Phase 4.1 Centralized Multi-Agent Orchestration",
-  "timestamp": "2026-09-21 10:31:23",
+  "benchmark": "Phase 4.2 Centralized Multi-Agent Orchestration",
+  "timestamp": "2026-09-21 10:49:58",
   "all_cases_passed": true,
   "total_cases": 12,
   "passed_cases": 12,
+  "total_metrics": 20,
+  "passed_metrics": 20,
   "metrics": {
-    "parent_agent_team_tool_dispatch": {
+    "parent_context_isolation_pass_rate": {
       "numerator": 1,
       "denominator": 1,
-      "rate": 1.0
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
     },
-    "parent_context_isolation_ratio": {
-      "numerator": 16500,
-      "denominator": 16500,
-      "rate": 1.0
+    "dependency_satisfaction_rate": {
+      "numerator": 5,
+      "denominator": 5,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
     },
-    "multi_agent_team_plan_validity": {
+    "plan_validity_rate": {
       "numerator": 7,
       "denominator": 7,
-      "rate": 1.0
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
     },
     "role_tool_conformance_rate": {
       "numerator": 4,
       "denominator": 4,
-      "rate": 1.0
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
     },
-    "reader_parallelism_active": {
+    "nested_agent_exposure_rate": {
+      "numerator": 0,
+      "denominator": 4,
+      "rate": 0.0,
+      "target": 0.0,
+      "comparison": "lte",
+      "passed": true
+    },
+    "mcp_leakage_rate": {
+      "numerator": 0,
+      "denominator": 4,
+      "rate": 0.0,
+      "target": 0.0,
+      "comparison": "lte",
+      "passed": true
+    },
+    "read_only_parallelization_rate": {
       "numerator": 1,
       "denominator": 1,
-      "rate": 1.0
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
     },
-    "writer_serialization_enforcement": {
+    "writer_serialization_rate": {
       "numerator": 1,
       "denominator": 1,
-      "rate": 1.0
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
     },
-    "concurrent_writer_zero_overlap": {
-      "numerator": 1,
+    "writer_reader_overlap_violation_rate": {
+      "numerator": 0,
       "denominator": 1,
-      "rate": 1.0
+      "rate": 0.0,
+      "target": 0.0,
+      "comparison": "lte",
+      "passed": true
     },
-    "test_gate_real_evidence_accuracy": {
-      "numerator": 3,
-      "denominator": 3,
-      "rate": 1.0
+    "test_gate_accuracy": {
+      "numerator": 7,
+      "denominator": 7,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
     },
-    "test_gate_adversarial_rejection_rate": {
+    "review_gate_accuracy": {
       "numerator": 4,
       "denominator": 4,
-      "rate": 1.0
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
     },
-    "review_gate_structured_accuracy": {
-      "numerator": 4,
-      "denominator": 4,
-      "rate": 1.0
-    },
-    "review_rejection_replan_rate": {
+    "replan_boundedness_rate": {
       "numerator": 1,
       "denominator": 1,
-      "rate": 1.0
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
     },
-    "test_failure_replan_rate": {
+    "child_failure_containment_rate": {
       "numerator": 1,
       "denominator": 1,
-      "rate": 1.0
-    },
-    "replan_bounded_halt_rate": {
-      "numerator": 1,
-      "denominator": 1,
-      "rate": 1.0
-    },
-    "upstream_failure_containment_rate": {
-      "numerator": 1,
-      "denominator": 1,
-      "rate": 1.0
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
     },
     "worktree_parent_dirty_rejection_rate": {
       "numerator": 1,
       "denominator": 1,
-      "rate": 1.0
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
     },
-    "worktree_fingerprint_protection_rate": {
+    "parent_workspace_race_protection_rate": {
       "numerator": 1,
       "denominator": 1,
-      "rate": 1.0
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
     },
-    "worktree_patch_verify_fail_closed_rate": {
+    "patch_verify_fail_closed_rate": {
       "numerator": 1,
       "denominator": 1,
-      "rate": 1.0
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "permission_denial_protection_rate": {
+      "numerator": 1,
+      "denominator": 1,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "missing_permission_fail_closed_rate": {
+      "numerator": 1,
+      "denominator": 1,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "failed_patch_leakage_rate": {
+      "numerator": 0,
+      "denominator": 3,
+      "rate": 0.0,
+      "target": 0.0,
+      "comparison": "lte",
+      "passed": true
+    },
+    "verified_patch_apply_rate": {
+      "numerator": 1,
+      "denominator": 1,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
     }
   },
   "cases": [
@@ -97,34 +174,34 @@
       "name": "Parent Agent Turn & Context Isolation",
       "passed": true,
       "metrics": {
-        "total_child_chars": 16500,
-        "parent_tool_result_chars": 531,
-        "leaked_child_chars": 0,
+        "raw_child_context_bytes": 16500,
+        "parent_tool_result_bytes": 531,
+        "raw_history_leak_count": 0,
         "dispatched": true,
         "isolated": true
       },
-      "details": "Parent executed agent_team; 16500 child chars isolated into 1 tool_result (531 chars)."
+      "details": "Child context: 16500 bytes; Parent tool result: 531 bytes; Raw history leaks: 0."
     },
     {
       "case_id": "case_2",
-      "name": "Multi-Agent DAG Planning & Topology",
+      "name": "DAG Planning & Dependency Satisfaction",
       "passed": true,
       "metrics": {
         "node_count": 5,
-        "dag_valid": true,
-        "root_parallel_tasks": 2
+        "satisfied_deps": 5,
+        "total_deps": 5
       },
-      "details": "Canonical 5-node software engineering DAG verified."
+      "details": "Dependencies satisfied: 5/5 across canonical 5-node DAG."
     },
     {
       "case_id": "case_3",
-      "name": "Multi-Agent Plan Validation Engine",
+      "name": "Plan Validation Engine",
       "passed": true,
       "metrics": {
         "checks_passed": 7,
         "total_checks": 7
       },
-      "details": "Validated plan integrity: 7/7 adversarial checks passed."
+      "details": "Plan validation checks: 7/7 passed."
     },
     {
       "case_id": "case_4",
@@ -134,11 +211,22 @@
         "conforming_roles": 4,
         "total_roles": 4
       },
-      "details": "Audited all role policies: 4/4 roles strictly conform."
+      "details": "Audited all role policies: 4/4 roles conform."
     },
     {
       "case_id": "case_5",
-      "name": "Parallel Read Concurrency",
+      "name": "Nested Agent Exposure & MCP Isolation",
+      "passed": true,
+      "metrics": {
+        "nested_tool_exposures": 0,
+        "mcp_leakages": 0,
+        "inspected_registries": 4
+      },
+      "details": "Nested tool exposures: 0/4; MCP leakages: 0/4."
+    },
+    {
+      "case_id": "case_6",
+      "name": "Read-Only Parallelization",
       "passed": true,
       "metrics": {
         "max_concurrent_readers": 2,
@@ -147,79 +235,67 @@
       "details": "Max concurrent readers: 2, speedup: 1.97x."
     },
     {
-      "case_id": "case_6",
+      "case_id": "case_7",
       "name": "Writer Serialization & Zero Overlap",
       "passed": true,
       "metrics": {
         "max_concurrent_writers": 1,
-        "reader_writer_overlap_observed": false
+        "overlap_violations": 0
       },
-      "details": "Max concurrent writers: 1, overlap observed: False."
-    },
-    {
-      "case_id": "case_7",
-      "name": "TestGate Evidence & Adversarial Matrix",
-      "passed": true,
-      "metrics": {
-        "real_checks_passed": 3,
-        "total_real": 3,
-        "adv_checks_passed": 4,
-        "total_adv": 4
-      },
-      "details": "Real evidence checks: 3/3; Adversarial rejections: 4/4."
+      "details": "Max concurrent writers: 1, overlap violations: 0."
     },
     {
       "case_id": "case_8",
-      "name": "ReviewGate Structured Verification",
+      "name": "TestGate Accuracy & Adversarial Matrix",
       "passed": true,
       "metrics": {
-        "checks_passed": 4,
-        "total_checks": 4
+        "checks_passed": 7,
+        "total_checks": 7
       },
-      "details": "Structured review gate parsing accuracy: 4/4."
+      "details": "Test gate checks: 7/7 passed."
     },
     {
       "case_id": "case_9",
-      "name": "Review Rejection Corrective Replan",
+      "name": "ReviewGate Accuracy & Replan Boundedness",
       "passed": true,
       "metrics": {
-        "replan_count": 1,
-        "rejection_handled": true
+        "review_checks": 4,
+        "total_review_checks": 4,
+        "replan_bounded": true
       },
-      "details": "Review rejection initiated replan 1; reviewer approved on second attempt."
+      "details": "Review checks: 4/4; Replan bounded to 1: True."
     },
     {
       "case_id": "case_10",
-      "name": "Test Failure Replan & Reviewer Skip",
+      "name": "Child Failure Containment",
       "passed": true,
       "metrics": {
-        "replan_count": 1,
-        "original_reviewer_skipped": true
+        "cascade_contained": true
       },
-      "details": "Test failure skipped original reviewer and triggered replan which completed successfully."
+      "details": "Upstream failure cascade skipped dependents cleanly: True."
     },
     {
       "case_id": "case_11",
-      "name": "Replan Boundedness & Upstream Containment",
-      "passed": true,
-      "metrics": {
-        "bounded_halt": true,
-        "cascade_contained": true
-      },
-      "details": "Bounded halt at replan 1: True; Cascade containment: True."
-    },
-    {
-      "case_id": "case_12",
-      "name": "Worktree Dirty, Fingerprint & Verify Gates",
+      "name": "Worktree Pre-Execution & Race Protection",
       "passed": true,
       "metrics": {
         "dirty_rejected": true,
-        "detached_head": true,
         "fingerprint_protected": true,
-        "patch_verify_failed_closed": true,
-        "cleaned_up": true
+        "verify_failed": true
       },
-      "details": "Dirty rejection: True; Detached: True; Fingerprint protection: True; Verify fail-closed: True."
+      "details": "Dirty rejection: True; Race protection: True; Verify fail-closed: True."
+    },
+    {
+      "case_id": "case_12",
+      "name": "Permission Gates, Leakage & Verified Patch Apply",
+      "passed": true,
+      "metrics": {
+        "perm_denial_protected": true,
+        "missing_perm_protected": true,
+        "failed_patch_leaks": 0,
+        "verified_patch_applied": true
+      },
+      "details": "Perm denial protected: True; Missing perm protected: True; Failed patch leaks: 0/3; Verified patch applied: True."
     }
   ]
 }
