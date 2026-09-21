@@ -107,6 +107,7 @@ class MemoryPipeline:
             self._injector = MemoryInjector(
                 memory_manager=self._memory,
                 reranker=self._reranker if self._reranker and self._reranker.enabled else None,
+                metrics=self.metrics,
             )
 
         # Curator (background optimization)
