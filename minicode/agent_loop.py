@@ -61,7 +61,13 @@ from minicode.model_registry import ModelSelectionSignal
 # 智能路由与自省 (Phase 3 导入)
 from minicode.smart_router import TaskOutcome
 
-# 上下文管理集成 (Claude Code-style + Engineering Cybernetics)
+from minicode.context_artifacts import ContextArtifactStore
+from minicode.context_budget import (
+    ContextAction,
+    ContextBudgetConfig,
+    ContextBudgetManager,
+    ContextBudgetMetrics,
+)
 from minicode.context_compactor import (
     ContextCompactor,
     AutoCompactConfig,
@@ -1148,6 +1154,9 @@ def run_agent_turn(
     micro_compactor: MicroCompactor | None = MicroCompactor()
     compaction_breaker: CompactionCircuitBreaker | None = CompactionCircuitBreaker()
     cost_control: CostControlLoop | None = None
+    context_artifact_store: ContextArtifactStore = ContextArtifactStore(cwd)
+    context_budget_manager: ContextBudgetManager = ContextBudgetManager(workspace=cwd)
+    context_budget_metrics: ContextBudgetMetrics = ContextBudgetMetrics()
     active_execution_trace = ExecutionTrace()
     turn_injected_memories: list[InjectedMemory] = []
 
@@ -1662,6 +1671,31 @@ def run_agent_turn(
 
             next_step: AgentStep
             try:
+                # ── Phase 3: Context Budget Planning & Enforcement (Runs before EVERY model step)
+                if context_budget_manager:
+                    current_messages, budget_plan = context_budget_manager.plan_and_apply(
+                        messages=current_messages,
+                        model=getattr(model, "model_id", None) or str(model),
+                        artifact_store=context_artifact_store,
+                        compactor=context_compactor,
+                        metrics=context_budget_metrics,
+                    )
+                    if context_manager:
+                        context_manager.messages = current_messages
+                    if (
+                        budget_plan.offload_count > 0
+                        or budget_plan.compress_count > 0
+                        or budget_plan.evict_count > 0
+                    ):
+                        freed = max(0, budget_plan.tokens_before - budget_plan.tokens_after_estimate)
+                        budget_event_msg = (
+                            f"Context budget: offloaded {budget_plan.offload_count} tool results, "
+                            f"compressed {budget_plan.compress_count} messages, "
+                            f"freed ~{freed} tokens."
+                        )
+                        logger.info(budget_event_msg)
+                        emit_runtime_event(category="info", message=budget_event_msg)
+
                 # ── Layer 0: Preemptive context guard (CC-style blocking limit)
                 if context_manager:
                     cm_stats = context_manager.get_stats()

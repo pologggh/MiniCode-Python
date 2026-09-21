@@ -489,7 +489,42 @@ class ContextBudgetManager:
 
         decisions_by_idx: dict[int, ContextDecision] = {}
 
+        # Pass 1: If over budget, evict ephemeral items first
+        if tokens_before > budget:
+            for idx, item in enumerate(items):
+                if item.zone == ContextZone.EPHEMERAL:
+                    decisions_by_idx[idx] = ContextDecision(
+                        item_id=item.item_id,
+                        message_index=idx,
+                        action=ContextAction.EVICT,
+                        score=item.importance_score,
+                        original_tokens=item.estimated_tokens,
+                        target_tokens=0,
+                        reason="evict_ephemeral",
+                    )
+                    current_estimate -= item.estimated_tokens
+
+        # Pass 2: Preemptively offload oversized externalizable tool results (>= offload_threshold_tokens)
+        for idx, item in enumerate(items):
+            if idx in decisions_by_idx:
+                continue
+            if item.externalizable and item.estimated_tokens >= self.config.offload_threshold_tokens:
+                preview_tokens = min(100, item.estimated_tokens // 4)
+                decisions_by_idx[idx] = ContextDecision(
+                    item_id=item.item_id,
+                    message_index=idx,
+                    action=ContextAction.OFFLOAD,
+                    score=item.importance_score,
+                    original_tokens=item.estimated_tokens,
+                    target_tokens=preview_tokens,
+                    reason=f"offload_oversized_{item.zone.value}",
+                )
+                current_estimate -= (item.estimated_tokens - preview_tokens)
+
+        # Pass 2: Process remaining unassigned items
         for idx in ranked_indices:
+            if idx in decisions_by_idx:
+                continue
             item = items[idx]
 
             # If under budget, keep everything remaining
@@ -505,23 +540,8 @@ class ContextBudgetManager:
                 )
                 continue
 
-            # Protected items cannot be EVICTED. But if externalizable and oversized, they can be OFFLOADed
+            # Protected items are kept (cannot be evicted)
             if item.protected:
-                if item.externalizable and item.estimated_tokens >= self.config.offload_threshold_tokens:
-                    preview_tokens = min(100, item.estimated_tokens // 4)
-                    freed = max(0, item.estimated_tokens - preview_tokens)
-                    current_estimate -= freed
-                    decisions_by_idx[idx] = ContextDecision(
-                        item_id=item.item_id,
-                        message_index=idx,
-                        action=ContextAction.OFFLOAD,
-                        score=item.importance_score,
-                        original_tokens=item.estimated_tokens,
-                        target_tokens=preview_tokens,
-                        reason=f"offload_protected_{item.zone.value}",
-                    )
-                    continue
-
                 decisions_by_idx[idx] = ContextDecision(
                     item_id=item.item_id,
                     message_index=idx,
@@ -548,11 +568,8 @@ class ContextBudgetManager:
                 )
                 continue
 
-            # 2. Large tool results / verification -> OFFLOAD
-            if item.externalizable or (
-                item.estimated_tokens >= self.config.offload_threshold_tokens
-                and item.zone in (ContextZone.TOOL_EVIDENCE, ContextZone.VERIFICATION, ContextZone.ERROR_EVIDENCE)
-            ):
+            # 2. Large tool results that were below preemptive threshold but still externalizable -> OFFLOAD
+            if item.externalizable:
                 preview_tokens = min(100, item.estimated_tokens // 4)
                 freed = max(0, item.estimated_tokens - preview_tokens)
                 current_estimate -= freed
