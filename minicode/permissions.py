@@ -321,7 +321,6 @@ class PermissionManager:
         )
         decision = result.get("decision")
         if decision == "allow_once":
-            self.session_allowed_paths.add(normalized_target)
             return
         if decision == "allow_always":
             self.allowed_directory_prefixes.add(scope_directory)
@@ -409,7 +408,9 @@ class PermissionManager:
         )
         decision = result.get("decision")
         if decision == "allow_once":
-            self.session_allowed_commands.add(signature)
+            return
+        if decision == "allow_turn":
+            self.turn_allowed_tool_actions.add(("run_command", signature))
             return
         if decision == "allow_always":
             self.allowed_command_patterns.add(signature)
@@ -471,7 +472,6 @@ class PermissionManager:
         )
         decision = result.get("decision")
         if decision == "allow_once":
-            self.session_allowed_edits.add(normalized_target)
             return
         if decision == "allow_turn":
             self.turn_allowed_edits.add(normalized_target)
@@ -500,13 +500,14 @@ class PermissionManager:
         scope: str = "",
         summary: str = "",
         details: list[str] | None = None,
+        display_scope: str = "",
     ) -> None:
         """Generic permission gate for tools without native checkpoints (MCP, batch ops, git commit)."""
         normalized_scope = (scope or tool_name).strip()
         key = (tool_name, normalized_scope)
 
         if key in self.session_denied_tool_actions:
-            raise RuntimeError(f"Tool action denied in session: {tool_name} (scope={normalized_scope})")
+            raise RuntimeError(f"Tool action denied in session: {tool_name} (scope={display_scope or normalized_scope})")
         if key in self.turn_allowed_tool_actions:
             return
 
@@ -514,12 +515,13 @@ class PermissionManager:
             raise RuntimeError(
                 f"Tool action requires approval: {tool_name}. Start minicode in TTY mode to approve it."
             )
+        shown_scope = display_scope or normalized_scope
         result = self.prompt(
             {
                 "kind": "tool_action",
                 "summary": summary or f"mini-code wants to run tool '{tool_name}'",
-                "details": details or [f"tool: {tool_name}", f"scope: {normalized_scope}"],
-                "scope": normalized_scope,
+                "details": details or [f"tool: {tool_name}", f"scope: {shown_scope}"],
+                "scope": shown_scope,
                 "choices": [
                     {"key": "y", "label": "allow once", "decision": "allow_once"},
                     {"key": "t", "label": "allow in this turn", "decision": "allow_turn"},
