@@ -8,14 +8,14 @@ The following candidate metrics are strictly derived from the reproducible Final
 
 - **Skill Prompt Token Reduction**:
   - *Baseline*: ~3,378 estimated tokens per task (100-skill catalog) | ~17,303 estimated tokens (500-skill catalog).
-  - *Adaptive*: ~51.9 estimated tokens per task.
-  - *Impact*: **~98.5% reduction** in prompt tokens exposed to model context while maintaining **100% relevant skill recall**.
+  - *Adaptive*: ~33.0 estimated tokens per task.
+  - *Impact*: **~99.0% reduction** in prompt tokens exposed to model context while maintaining **100% relevant skill recall**.
   - *Source*: `benchmarks/final_eval/worker.py:run_skill_routing_benchmark` & `minicode/skill_router.py`.
 
-- **Context Budget & Artifact Offloading**:
+- **Context Budget & Recoverable Artifact Offloading**:
   - *Baseline*: Context compactor truncated large tool logs permanently (zero artifact recovery).
-  - *Adaptive*: Enforced strict token budgets (e.g. 6,000 token limit) by offloading massive tool results to recoverable disk artifacts with on-demand range retrieval.
-  - *Impact*: Protected early critical architectural constraints and latest verification evidence under extreme context pressure.
+  - *Adaptive*: Adaptive 包含结构化上下文元数据与可恢复 artifact 引用，单轮上下文基础开销略高于纯文本（743 vs 512 tokens, +45.1%），但在长上下文和大型工具输出场景下通过 offload 保证 100% 遵守 6000 token budget，且产物 100% 可恢复验证 (SHA-256 match).
+  - *Impact*: Protected early critical architectural constraints and latest verification evidence under extreme context pressure without unrecoverable data loss.
   - *Source*: `minicode/context_budget.py` and `minicode/context_artifacts.py`.
 
 ---

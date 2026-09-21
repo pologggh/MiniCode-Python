@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import random
 from dataclasses import dataclass, field
 from typing import Any
@@ -170,6 +171,34 @@ SKILL_EVAL_QUERIES = [
         "is_edge_case": False,
     },
     {
+        "query": "Plan a mountain hiking vacation in the Swiss Alps with scenic trails",
+        "target_skill": None,
+        "relevant_skills": [],
+        "is_unrelated": True,
+        "is_edge_case": False,
+    },
+    {
+        "query": "Historical analysis of Renaissance oil painting techniques and pigments",
+        "target_skill": None,
+        "relevant_skills": [],
+        "is_unrelated": True,
+        "is_edge_case": False,
+    },
+    {
+        "query": "Beginner acoustic guitar chords and fingerpicking exercises for folk songs",
+        "target_skill": None,
+        "relevant_skills": [],
+        "is_unrelated": True,
+        "is_edge_case": False,
+    },
+    {
+        "query": "Origami folding instructions for paper cranes and geometric tessellations",
+        "target_skill": None,
+        "relevant_skills": [],
+        "is_unrelated": True,
+        "is_edge_case": False,
+    },
+    {
         "query": "go",
         "target_skill": "go-concurrency",
         "relevant_skills": ["go-concurrency"],
@@ -191,80 +220,104 @@ SKILL_EVAL_QUERIES = [
 EXPERIENCE_FIXTURES = [
     {
         "id": "exp-ver-pytest",
+        "eval_id": "EVAL_PYTEST_001",
         "task": "Fix pytest fixture scope leak across test classes in test suite",
         "outcome": "SUCCESS_VERIFIED",
+        "ground_truth_outcome": "SUCCESS_VERIFIED",
+        "ground_truth_verified": True,
         "is_verified": True,
         "tags": ["pytest", "fixture", "scope", "leak"],
-        "content": "Change fixture scope from function to class and use clean yield teardown.",
+        "content": "[EVAL_ID:EVAL_PYTEST_001] Change fixture scope from function to class and use clean yield teardown.",
         "verification_proof": "pytest tests/ passed 10/10 with zero memory leak.",
         "recovery_advice": None,
     },
     {
         "id": "exp-ver-fastapi",
+        "eval_id": "EVAL_FASTAPI_002",
         "task": "Configure FastAPI CORS middleware for frontend domain access",
         "outcome": "SUCCESS_VERIFIED",
+        "ground_truth_outcome": "SUCCESS_VERIFIED",
+        "ground_truth_verified": True,
         "is_verified": True,
         "tags": ["fastapi", "cors", "middleware", "origin"],
-        "content": "Add CORSMiddleware with explicit allow_origins and credentials support.",
+        "content": "[EVAL_ID:EVAL_FASTAPI_002] Add CORSMiddleware with explicit allow_origins and credentials support.",
         "verification_proof": "curl OPTIONS /api returned 200 with Access-Control-Allow-Origin.",
         "recovery_advice": None,
     },
     {
         "id": "exp-unver-sqlite",
+        "eval_id": "EVAL_SQLITE_003",
         "task": "Configure SQLite PRAGMA journal_mode to WAL for concurrent readers",
         "outcome": "SUCCESS_UNVERIFIED",
+        "ground_truth_outcome": "SUCCESS_UNVERIFIED",
+        "ground_truth_verified": False,
         "is_verified": False,
         "tags": ["sqlite", "wal", "database", "pragma"],
-        "content": "Execute PRAGMA journal_mode=WAL; upon opening connection.",
+        "content": "[EVAL_ID:EVAL_SQLITE_003] Execute PRAGMA journal_mode=WAL; upon opening connection.",
         "verification_proof": None,
         "recovery_advice": None,
     },
     {
         "id": "exp-failed-tool",
+        "eval_id": "EVAL_NPM_004",
         "task": "Install private npm dependencies without auth token",
         "outcome": "FAILED_TOOL",
+        "ground_truth_outcome": "NORMAL_FAILURE",
+        "ground_truth_verified": False,
         "is_verified": False,
         "tags": ["npm", "install", "auth", "token", "failure"],
-        "content": "npm install failed with 401 Unauthorized against registry.npmjs.org.",
+        "content": "[EVAL_ID:EVAL_NPM_004] npm install failed with 401 Unauthorized against registry.npmjs.org.",
         "verification_proof": None,
         "recovery_advice": "Configure ~/.npmrc with valid NPM_TOKEN before invoking install.",
     },
     {
         "id": "exp-failed-ver",
+        "eval_id": "EVAL_LINT_005",
         "task": "Fix Python data transformer formatting and linting errors",
         "outcome": "FAILED_VERIFICATION",
+        "ground_truth_outcome": "NORMAL_FAILURE",
+        "ground_truth_verified": False,
         "is_verified": False,
         "tags": ["python", "lint", "flake8", "e501", "failure"],
-        "content": "Verification failed: flake8 E501 line too long (114 > 88 characters).",
+        "content": "[EVAL_ID:EVAL_LINT_005] Verification failed: flake8 E501 line too long (114 > 88 characters).",
         "verification_proof": None,
         "recovery_advice": "Split dictionary comprehension or long function signature into multiple lines.",
     },
     {
         "id": "exp-blocked",
+        "eval_id": "EVAL_LAMBDA_006",
         "task": "Deploy cloud function to AWS Lambda environment",
         "outcome": "BLOCKED",
+        "ground_truth_outcome": "NORMAL_FAILURE",
+        "ground_truth_verified": False,
         "is_verified": False,
         "tags": ["aws", "lambda", "deploy", "iam", "blocked"],
-        "content": "Deployment blocked: AccessDeniedException missing lambda:UpdateFunctionCode.",
+        "content": "[EVAL_ID:EVAL_LAMBDA_006] Deployment blocked: AccessDeniedException missing lambda:UpdateFunctionCode.",
         "recovery_advice": "Request IAM role policy grant from system administrator.",
     },
     {
         "id": "exp-dup-pytest",
+        "eval_id": "EVAL_PYTEST_001",
         "task": "Fix pytest fixture scope leak across test classes in test suite",
         "outcome": "SUCCESS_VERIFIED",
+        "ground_truth_outcome": "SUCCESS_VERIFIED",
+        "ground_truth_verified": True,
         "is_verified": True,
         "tags": ["pytest", "fixture", "scope", "leak"],
-        "content": "Change fixture scope from function to class and use clean yield teardown.",
+        "content": "[EVAL_ID:EVAL_PYTEST_001] Change fixture scope from function to class and use clean yield teardown.",
         "verification_proof": "pytest tests/ passed 10/10 with zero memory leak.",
         "recovery_advice": None,
     },
     {
         "id": "exp-dup-fastapi",
+        "eval_id": "EVAL_FASTAPI_002",
         "task": "Configure FastAPI CORS middleware for frontend domain access",
         "outcome": "SUCCESS_VERIFIED",
+        "ground_truth_outcome": "SUCCESS_VERIFIED",
+        "ground_truth_verified": True,
         "is_verified": True,
         "tags": ["fastapi", "cors", "middleware", "origin"],
-        "content": "Add CORSMiddleware with explicit allow_origins and credentials support.",
+        "content": "[EVAL_ID:EVAL_FASTAPI_002] Add CORSMiddleware with explicit allow_origins and credentials support.",
         "verification_proof": "curl OPTIONS /api returned 200 with Access-Control-Allow-Origin.",
         "recovery_advice": None,
     },
@@ -275,59 +328,67 @@ MEMORY_EVAL_QUERIES = [
         "query": "How to resolve pytest fixture scope leak in test suite",
         "type": "normal",
         "expected_id": "exp-ver-pytest",
+        "expected_eval_id": "EVAL_PYTEST_001",
         "prohibited_leakage": ["exp-failed-tool", "exp-failed-ver", "exp-blocked"],
     },
     {
         "query": "Configure FastAPI CORS middleware for frontend domain access",
         "type": "normal",
         "expected_id": "exp-ver-fastapi",
+        "expected_eval_id": "EVAL_FASTAPI_002",
         "prohibited_leakage": ["exp-failed-tool", "exp-failed-ver", "exp-blocked"],
     },
     {
         "query": "Configure SQLite journal mode for concurrent connections",
         "type": "normal",
         "expected_id": "exp-unver-sqlite",
+        "expected_eval_id": "EVAL_SQLITE_003",
         "prohibited_leakage": ["exp-failed-tool", "exp-failed-ver", "exp-blocked"],
     },
     {
         "query": "flake8 E501 line too long error during verification",
         "type": "failure_recovery",
         "expected_id": "exp-failed-ver",
+        "expected_eval_id": "EVAL_LINT_005",
         "expected_advice": "Split dictionary comprehension",
     },
     {
         "query": "npm install 401 Unauthorized against registry",
         "type": "failure_recovery",
         "expected_id": "exp-failed-tool",
+        "expected_eval_id": "EVAL_NPM_004",
         "expected_advice": "Configure ~/.npmrc with valid NPM_TOKEN",
     },
 ]
 
 
 # Category C: Context Runtime Message Stream Fixture
+LARGE_LOG_CONTENT = "2026-09-21 10:00:00 [DEBUG] Initializing ingestion buffer chunk #" + "\n".join(
+    [f"chunk_{i:04d} payload data timestamp={1700000000 + i} status=OK checksum=abcdef{i:04x}" for i in range(500)]
+)
+
+LARGE_TEST_TRACE_CONTENT = "============================= test session starts ==============================\n" + "\n".join(
+    [f"FAILED tests/test_stream.py::test_packet_{i:03d} - ConnectionResetError: peer closed socket" for i in range(800)]
+) + "\n======================== 800 failed, 20 passed in 14.2s ========================"
+
+LARGE_LOG_SHA256 = hashlib.sha256(LARGE_LOG_CONTENT.encode("utf-8")).hexdigest()
+LARGE_TEST_TRACE_SHA256 = hashlib.sha256(LARGE_TEST_TRACE_CONTENT.encode("utf-8")).hexdigest()
+CONTEXT_EXPECTED_ARTIFACT_HASHES = {LARGE_LOG_SHA256, LARGE_TEST_TRACE_SHA256}
+
+
 def generate_context_message_stream() -> list[dict[str, Any]]:
     """Generate a 12-turn message stream with large file reads, command traces, and constraints."""
-    # Synthetic 8,000 token log dump (~32,000 chars)
-    large_log = "2026-09-21 10:00:00 [DEBUG] Initializing ingestion buffer chunk #" + "\n".join(
-        [f"chunk_{i:04d} payload data timestamp={1700000000 + i} status=OK checksum=abcdef{i:04x}" for i in range(500)]
-    )
-
-    # Synthetic 12,000 token test trace (~48,000 chars)
-    large_test_trace = "============================= test session starts ==============================\n" + "\n".join(
-        [f"FAILED tests/test_stream.py::test_packet_{i:03d} - ConnectionResetError: peer closed socket" for i in range(800)]
-    ) + "\n======================== 800 failed, 20 passed in 14.2s ========================"
-
     return [
         {"role": "system", "content": "You are an autonomous engineering agent for the Adaptive Data Pipeline project."},
         {"role": "user", "content": "CRITICAL ARCHITECTURAL CONSTRAINT: Never modify the legacy packet serialization protocol header in packet_parser.c under any circumstances."},
         {"role": "assistant", "content": "Understood. I will strictly preserve the packet serialization protocol header in packet_parser.c."},
         {"role": "user", "content": "Please analyze the server access log from the previous run to identify dropped connections."},
         {"role": "assistant", "content": "I will read the server access log file."},
-        {"role": "tool_result", "toolName": "read_file", "content": large_log},
+        {"role": "tool_result", "toolName": "read_file", "content": LARGE_LOG_CONTENT},
         {"role": "assistant", "content": "The log indicates connection reset spikes during high burst rates."},
         {"role": "user", "content": "Run the integration test suite to reproduce the connection reset issue."},
         {"role": "assistant", "content": "Running test suite now."},
-        {"role": "tool_result", "toolName": "run_command", "content": large_test_trace},
+        {"role": "tool_result", "toolName": "run_command", "content": LARGE_TEST_TRACE_CONTENT},
         {"role": "assistant", "content": "Identified root cause: socket buffer exhaustion in the streaming loop."},
         {"role": "user", "content": "Apply the socket buffer fix and verify test outcomes."},
         {"role": "assistant", "content": "I have adjusted socket send/receive buffer sizes in stream_engine.py. Running verification..."},
