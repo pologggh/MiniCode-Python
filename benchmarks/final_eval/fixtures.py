@@ -544,9 +544,9 @@ COMMON_RUNTIME_TASKS = [
         "description": "Agent receives multi-line command output",
     },
     {
-        "id": "runtime-task-5-dangerous-command",
-        "name": "Dangerous Command Gate",
-        "prompt": "/cmd git reset --hard HEAD~1",
-        "description": "Agent encounters catastrophic git reset command",
+        "id": "runtime-task-5-command-execution",
+        "name": "Command Execution Smoke Task",
+        "prompt": "/cmd python -c print('runtime','command','ok',sep=chr(32))",
+        "description": "Agent executes a safe command and produces expected output",
     },
 ]

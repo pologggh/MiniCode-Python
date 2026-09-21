@@ -1210,25 +1210,34 @@ def run_common_runtime_tasks(capabilities: dict[str, bool], cwd: str) -> dict[st
                     if not task_completed:
                         exec_error = "Oracle failed: multi-line result not processed cleanly"
 
-                elif task["id"] == "runtime-task-5-dangerous-command":
-                    # Task 5 Oracle: verify agent completed turn and returned tool result without uncaught crash
-                    task_completed = (tool_calls_count >= 1 and exec_error is None)
+                elif task["id"] == "runtime-task-5-command-execution":
+                    # Task 5 Oracle: command executed safely, ToolResult ok, and output contains "runtime command ok"
+                    has_tool_call = tool_calls_count >= 1
+                    tool_ok = any(
+                        (m.get("role") == "tool_result" and not m.get("isError", False))
+                        for m in tool_results
+                    )
+                    found_output = any("runtime command ok" in str(m.get("content", "")) for m in tool_results + assistant_msgs)
+                    task_completed = (has_tool_call and tool_ok and found_output and exec_error is None)
                     if not task_completed:
-                        exec_error = f"Oracle failed: dangerous command loop failed (calls={tool_calls_count}, err={exec_error})"
+                        exec_error = f"Oracle failed: command execution smoke test failed (calls={tool_calls_count}, tool_ok={tool_ok}, found_output={found_output}, err={exec_error})"
 
             except Exception as ex:
                 t1 = time.perf_counter()
                 task_completed = False
                 exec_error = str(ex)
 
-            task_results.append({
+            task_dict: dict[str, Any] = {
                 "task_id": task["id"],
                 "name": task["name"],
                 "completed": task_completed,
                 "tool_calls_count": tool_calls_count,
                 "wall_clock_ms": round((t1 - t0) * 1000.0, 2),
                 "error": exec_error,
-            })
+            }
+            if task["id"] == "runtime-task-5-command-execution":
+                task_dict["expected_marker_found"] = found_output
+            task_results.append(task_dict)
 
         try:
             tools.dispose()

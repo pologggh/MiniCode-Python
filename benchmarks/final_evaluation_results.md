@@ -9,9 +9,9 @@ Comprehensive cross-version evaluation comparing **Original MiniCode** against *
 - **Phase 1 Merge Parentage Proof**: Commit `f3d8d7a` has Parent 1 `fd9bf63` (baseline) and Parent 2 `0db89b1` (`feat/skill-router`).
 - **Platform**: `Windows 10`
 - **Python Version**: `3.13.9`
-- **Timestamp**: `2026-09-21T13:02:40Z`
-- **Baseline Loaded Minicode**: `C:\Users\user\AppData\Local\Temp\eval_baseline_ybepc58z\minicode\__init__.py`
-- **Adaptive Loaded Minicode**: `C:\Users\user\AppData\Local\Temp\eval_adaptive_nukzthnu\minicode\__init__.py`
+- **Timestamp**: `2026-09-21T13:35:44Z`
+- **Baseline Loaded Minicode**: `C:\Users\user\AppData\Local\Temp\eval_baseline_bb7oynw4\minicode\__init__.py`
+- **Adaptive Loaded Minicode**: `C:\Users\user\AppData\Local\Temp\eval_adaptive_jhilkvok\minicode\__init__.py`
 
 ## Methodology & Cross-Process Isolation
 
@@ -101,7 +101,7 @@ Key direct improvements where identical inputs were evaluated across both versio
 4. **Verified Experience Precision**: Reached **67.0%** precision in Adaptive retrieval compared to **38.0%** unverified keyword matches in baseline.
 5. **Deterministic Policy Block Rate**: Improved from **33%** in baseline to **100%** in Adaptive on the deterministic policy fixture, which enforces hard denials on destructive commands (`git reset --hard`, `rm -rf`).
 6. **Sensitive Secret Leak Rate**: Reduced from **100%** raw leakage on `.env` read to **0%** via automatic secret redaction (`[REDACTED]`).
-7. **Context Token Footprint & Budget Compliance**: Adaptive includes structured context metadata and recoverable artifact references, resulting in baseline per-turn prompt overhead slightly higher than plain text (743 vs 512 tokens, +45.1%). However, under heavy context pressure with large tool outputs (12k tokens), Adaptive guarantees 100% compliance with the identical 6,000 token budget limit via artifact offloading with 100% hash-verified recovery, whereas Baseline persisted oversized tool results through the existing ToolResultBudgetManager but lacked a first-class artifact recovery interface.
+7. **Context Token Footprint & Budget Compliance**: Adaptive retained a larger prepared context on this deterministic fixture (743 vs 512 estimated tokens, +45.1%), while remaining within the same 6000-token budget and supporting first-class artifact recovery. In the deterministic synthetic context fixture, Adaptive remained within the configured 6000-token budget and achieved 100% source-hash-verified artifact recovery, whereas Baseline persisted oversized tool results through the existing ToolResultBudgetManager but lacked a first-class artifact recovery interface.
 
 ## Adaptive-Only Capabilities
 
@@ -109,13 +109,13 @@ Capabilities completely absent in Original MiniCode (baseline marked as `UNSUPPO
 
 - **First-class Recoverable Context Artifacts**: While baseline possessed legacy disk persistence for tool outputs via `ToolResultBudgetManager`, Adaptive introduced first-class recoverable context artifacts with deterministic IDs (`ctx_*`), structured metadata, range retrieval, and load tools, verified with 100% SHA-256 hash match.
 - **Centralized Agent Team Orchestration**: Automated multi-role decomposition (Researcher, Coder, Tester, Reviewer) executed via a topological DAG with sibling concurrency and writer serialization under deterministic scheduler runtime verification.
-- **Role Quality Gates**: Automated validation ensuring that code modifications cannot merge without passing test evidence (TestGate) and structured reviewer sign-off (ReviewGate).
+- **Role Quality Gates**: TestGate and ReviewGate enforce team-level quality acceptance; when optional worktree isolation is enabled, only verified and approved patches are written back to the parent workspace.
 - **Tamper-Evident Security Audit Log**: Every tool execution is recorded in an append-only JSONL log with cryptographic SHA-256 hash chaining, verified via `verify_chain()`.
 - **Untrusted Content Taint Enforcement**: External tool results (e.g. web fetch, MCP outputs) are scanned for prompt injection attacks and wrapped with security boundaries.
 
 ## Common Runtime Tasks
 
-All 5 standard runtime tasks (code search, single-file edit, test command check, large result handling, and dangerous command gating) completed deterministically through real agent turn execution in both versions.
+Both versions completed five neutral scripted runtime tasks: search, edit, test, large-result handling, and normal command execution.
 
 ## Live Model Evaluation
 

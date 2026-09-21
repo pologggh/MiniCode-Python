@@ -11,10 +11,10 @@
   "invalid_reasons": [],
   "baseline": {
     "commit_sha": "fd9bf63b74aa2717d5020f98af9df61c15fcfdfc",
-    "loaded_minicode_path": "C:\\Users\\user\\AppData\\Local\\Temp\\eval_baseline_ybepc58z\\minicode\\__init__.py",
+    "loaded_minicode_path": "C:\\Users\\user\\AppData\\Local\\Temp\\eval_baseline_bb7oynw4\\minicode\\__init__.py",
     "python_version": "3.13.9",
     "platform": "Windows 10",
-    "timestamp": "2026-09-21T13:02:39Z",
+    "timestamp": "2026-09-21T13:35:42Z",
     "capabilities": {
       "skill_router": false,
       "experience_memory": false,
@@ -130,7 +130,7 @@
             "name": "Codebase Search",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 11.28,
+            "wall_clock_ms": 9.81,
             "error": null
           },
           {
@@ -138,7 +138,7 @@
             "name": "Single-File Edit",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 3.59,
+            "wall_clock_ms": 3.28,
             "error": null
           },
           {
@@ -146,7 +146,7 @@
             "name": "Test Failure Repair",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 43.04,
+            "wall_clock_ms": 41.05,
             "error": null
           },
           {
@@ -154,16 +154,17 @@
             "name": "Large Tool Result Handling",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 45.39,
+            "wall_clock_ms": 42.41,
             "error": null
           },
           {
-            "task_id": "runtime-task-5-dangerous-command",
-            "name": "Dangerous Command Gate",
+            "task_id": "runtime-task-5-command-execution",
+            "name": "Command Execution Smoke Task",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 43.03,
-            "error": null
+            "wall_clock_ms": 51.28,
+            "error": null,
+            "expected_marker_found": true
           }
         ]
       }
@@ -171,10 +172,10 @@
   },
   "adaptive": {
     "commit_sha": "1a07358710576c6f16a8d8cabf517c4c4bc97950",
-    "loaded_minicode_path": "C:\\Users\\user\\AppData\\Local\\Temp\\eval_adaptive_nukzthnu\\minicode\\__init__.py",
+    "loaded_minicode_path": "C:\\Users\\user\\AppData\\Local\\Temp\\eval_adaptive_jhilkvok\\minicode\\__init__.py",
     "python_version": "3.13.9",
     "platform": "Windows 10",
-    "timestamp": "2026-09-21T13:02:40Z",
+    "timestamp": "2026-09-21T13:35:44Z",
     "capabilities": {
       "skill_router": true,
       "experience_memory": true,
@@ -187,7 +188,7 @@
         "catalog_sizes": {
           "10": {
             "catalog_size": 10,
-            "median_latency_ms": 0.24,
+            "median_latency_ms": 0.23,
             "avg_skills_exposed": 0.91,
             "avg_estimated_tokens": 26.1,
             "recall_rate": 1.0,
@@ -199,7 +200,7 @@
           },
           "100": {
             "catalog_size": 100,
-            "median_latency_ms": 2.18,
+            "median_latency_ms": 2.09,
             "avg_skills_exposed": 1.09,
             "avg_estimated_tokens": 33.0,
             "recall_rate": 1.0,
@@ -211,7 +212,7 @@
           },
           "500": {
             "catalog_size": 500,
-            "median_latency_ms": 68.04,
+            "median_latency_ms": 60.63,
             "avg_skills_exposed": 1.09,
             "avg_estimated_tokens": 33.1,
             "recall_rate": 1.0,
@@ -408,7 +409,7 @@
             "name": "Codebase Search",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 18.11,
+            "wall_clock_ms": 17.04,
             "error": null
           },
           {
@@ -416,7 +417,7 @@
             "name": "Single-File Edit",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 13.46,
+            "wall_clock_ms": 10.38,
             "error": null
           },
           {
@@ -424,7 +425,7 @@
             "name": "Test Failure Repair",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 52.66,
+            "wall_clock_ms": 49.09,
             "error": null
           },
           {
@@ -432,16 +433,17 @@
             "name": "Large Tool Result Handling",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 62.19,
+            "wall_clock_ms": 57.3,
             "error": null
           },
           {
-            "task_id": "runtime-task-5-dangerous-command",
-            "name": "Dangerous Command Gate",
+            "task_id": "runtime-task-5-command-execution",
+            "name": "Command Execution Smoke Task",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 11.94,
-            "error": null
+            "wall_clock_ms": 58.13,
+            "error": null,
+            "expected_marker_found": true
           }
         ]
       }

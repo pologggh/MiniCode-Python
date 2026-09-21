@@ -549,6 +549,13 @@ def test_deprecated_metrics_handled():
             },
             "runtime_tasks": {
                 "all_tasks_completed": True,
+                "task_details": [
+                    {"task_id": "runtime-task-1-search", "completed": True, "error": None, "tool_calls_count": 1},
+                    {"task_id": "runtime-task-2-edit", "completed": True, "error": None, "tool_calls_count": 1},
+                    {"task_id": "runtime-task-3-test-repair", "completed": True, "error": None, "tool_calls_count": 1},
+                    {"task_id": "runtime-task-4-large-result", "completed": True, "error": None, "tool_calls_count": 1},
+                    {"task_id": "runtime-task-5-command-execution", "completed": True, "error": None, "tool_calls_count": 1, "expected_marker_found": True},
+                ],
             },
         }
     }
@@ -620,6 +627,13 @@ def test_deprecated_metrics_handled():
             },
             "runtime_tasks": {
                 "all_tasks_completed": True,
+                "task_details": [
+                    {"task_id": "runtime-task-1-search", "completed": True, "error": None, "tool_calls_count": 1},
+                    {"task_id": "runtime-task-2-edit", "completed": True, "error": None, "tool_calls_count": 1},
+                    {"task_id": "runtime-task-3-test-repair", "completed": True, "error": None, "tool_calls_count": 1},
+                    {"task_id": "runtime-task-4-large-result", "completed": True, "error": None, "tool_calls_count": 1},
+                    {"task_id": "runtime-task-5-command-execution", "completed": True, "error": None, "tool_calls_count": 1, "expected_marker_found": True},
+                ],
             },
         }
     }
@@ -665,7 +679,16 @@ def test_baseline_context_legacy_persistence_documented():
             "context_runtime": {"estimated_context_tokens": 500, "critical_retention": True, "stable_task_retention": True, "latest_verification_retention": True, "budget_limit": 6000, "budget_compliance": True, "artifact_recovery_supported": False, "artifact_recovery_success_rate": 0.0, "artifact_source_hash_match_rate": 0.0, "artifact_metadata_integrity_rate": 0.0},
             "multi_agent": {"one_off_task_delegation": True},
             "security": {"policy_critical_action_block_rate": 0.33, "policy_intervention_rate": 0.5, "sensitive_secret_leak_rate": 1.0, "fail_closed_case_count": 2, "fail_closed_blocked_count": 0, "fail_closed_rate": 0.0},
-            "runtime_tasks": {"all_tasks_completed": True},
+            "runtime_tasks": {
+                "all_tasks_completed": True,
+                "task_details": [
+                    {"task_id": "runtime-task-1-search", "completed": True, "error": None, "tool_calls_count": 1},
+                    {"task_id": "runtime-task-2-edit", "completed": True, "error": None, "tool_calls_count": 1},
+                    {"task_id": "runtime-task-3-test-repair", "completed": True, "error": None, "tool_calls_count": 1},
+                    {"task_id": "runtime-task-4-large-result", "completed": True, "error": None, "tool_calls_count": 1},
+                    {"task_id": "runtime-task-5-command-execution", "completed": True, "error": None, "tool_calls_count": 1, "expected_marker_found": True},
+                ],
+            },
         },
     }
     adapt_data = {
@@ -677,7 +700,16 @@ def test_baseline_context_legacy_persistence_documented():
             "context_runtime": {"estimated_context_tokens": 700, "critical_retention": True, "stable_task_retention": True, "latest_verification_retention": True, "budget_limit": 6000, "budget_compliance": True, "artifact_recovery_supported": True, "artifact_recovery_success_rate": 1.0, "artifact_source_hash_match_rate": 1.0, "artifact_metadata_integrity_rate": 1.0},
             "multi_agent": {"one_off_task_delegation": True, "centralized_multi_agent": True, "dag_dependency_execution": True, "sibling_concurrency": True, "writer_serialization": True, "role_quality_gates": True, "bounded_replan": True, "parent_context_isolation": True, "concurrency_verified": True, "dag_dependency_verified": True, "test_gate_verified": True, "review_gate_verified": True, "writer_concurrency_verified": True, "replan_verified": True, "parent_isolation_verified": True, "runtime_verified": True},
             "security": {"policy_critical_action_block_rate": 1.0, "policy_intervention_rate": 1.0, "sensitive_secret_leak_rate": 0.0, "fail_closed_case_count": 2, "fail_closed_blocked_count": 2, "fail_closed_rate": 1.0, "mcp_pre_execution_gate": True, "untrusted_taint_enforcement": True, "tamper_evident_audit": True},
-            "runtime_tasks": {"all_tasks_completed": True},
+            "runtime_tasks": {
+                "all_tasks_completed": True,
+                "task_details": [
+                    {"task_id": "runtime-task-1-search", "completed": True, "error": None, "tool_calls_count": 1},
+                    {"task_id": "runtime-task-2-edit", "completed": True, "error": None, "tool_calls_count": 1},
+                    {"task_id": "runtime-task-3-test-repair", "completed": True, "error": None, "tool_calls_count": 1},
+                    {"task_id": "runtime-task-4-large-result", "completed": True, "error": None, "tool_calls_count": 1},
+                    {"task_id": "runtime-task-5-command-execution", "completed": True, "error": None, "tool_calls_count": 1, "expected_marker_found": True},
+                ],
+            },
         },
     }
     invalid_reasons: list[str] = []
@@ -789,4 +821,82 @@ def test_require_metric_missing_fails():
     assert none_val is None
     assert len(invalid_reasons) == 2
     assert "Required metric 'a.c' is None" in invalid_reasons[1]
+
+
+def test_runtime_task5_has_real_command_oracle():
+    """Verify runtime-task-5 has real command execution oracle and verifies expected marker."""
+    task5 = next(t for t in COMMON_RUNTIME_TASKS if t["id"] == "runtime-task-5-command-execution")
+    assert task5["name"] == "Command Execution Smoke Task"
+    assert "runtime-task-5-dangerous-command" not in [t["id"] for t in COMMON_RUNTIME_TASKS]
+
+    # Run common runtime tasks directly and check task 5 details
+    repo_dir = str(Path.cwd())
+    caps = {"skill_router": True, "experience_memory": True, "context_budget": True, "agent_team": True, "security_policy": True}
+    res = run_common_runtime_tasks(caps, repo_dir)
+    assert res["all_tasks_completed"] is True
+
+    t5_detail = next(t for t in res["task_details"] if t["task_id"] == "runtime-task-5-command-execution")
+    assert t5_detail["completed"] is True
+    assert t5_detail["error"] is None
+    assert t5_detail["tool_calls_count"] >= 1
+    assert t5_detail["expected_marker_found"] is True
+
+
+def test_common_runtime_contains_no_dangerous_security_claim():
+    """Verify Common Runtime reports and fixtures do not claim dangerous command security gating."""
+    for t in COMMON_RUNTIME_TASKS:
+        assert "dangerous" not in t["id"].lower()
+        assert "dangerous" not in t["name"].lower()
+        assert "dangerous" not in t["description"].lower()
+
+    provenance = {"baseline_commit": BASELINE_COMMIT, "adaptive_commit": ADAPTIVE_COMMIT, "phase1_merge_sha": "f3d8d7a", "phase1_parent_baseline": BASELINE_COMMIT, "phase1_parent_feature": "0db89b1"}
+    md = generate_markdown_report(provenance, {}, {}, [])
+    assert "dangerous command gating" not in md
+    assert "Both versions completed five neutral scripted runtime tasks: search, edit, test, large-result handling, and normal command execution." in md
+
+
+def test_worktree_gate_claim_is_scoped():
+    """Verify quality gate claims are scoped to team acceptance and worktree isolation, not absolute merge prevention."""
+    provenance = {"baseline_commit": BASELINE_COMMIT, "adaptive_commit": ADAPTIVE_COMMIT, "phase1_merge_sha": "f3d8d7a", "phase1_parent_baseline": BASELINE_COMMIT, "phase1_parent_feature": "0db89b1"}
+    md = generate_markdown_report(provenance, {}, {}, [])
+    resume = generate_resume_metrics([])
+
+    assert "cannot merge without" not in md
+    assert "cannot merge without" not in resume
+    assert "未经 Test/Review 无法修改主工作区" not in md
+    assert "未经 Test/Review 无法修改主工作区" not in resume
+
+    expected_wording = "TestGate and ReviewGate enforce team-level quality acceptance; when optional worktree isolation is enabled, only verified and approved patches are written back to the parent workspace."
+    assert expected_wording in md
+    assert expected_wording in resume
+
+
+def test_context_tradeoff_subject_correct():
+    """Verify Context tradeoff accurately attributes larger prepared context to Adaptive without claiming reduction."""
+    provenance = {"baseline_commit": BASELINE_COMMIT, "adaptive_commit": ADAPTIVE_COMMIT, "phase1_merge_sha": "f3d8d7a", "phase1_parent_baseline": BASELINE_COMMIT, "phase1_parent_feature": "0db89b1"}
+    md = generate_markdown_report(provenance, {}, {}, [])
+    resume = generate_resume_metrics([])
+
+    assert "baseline per-turn prompt overhead" not in md
+    assert "baseline per-turn prompt overhead" not in resume
+    assert "context token reduction" not in md
+    assert "context token reduction" not in resume
+
+    expected_context_wording = "Adaptive retained a larger prepared context on this deterministic fixture (743 vs 512 estimated tokens, +45.1%), while remaining within the same 6000-token budget and supporting first-class artifact recovery."
+    assert expected_context_wording in md
+    assert expected_context_wording in resume
+
+
+def test_resume_context_claim_has_fixture_scope():
+    """Verify resume metrics claims are explicitly qualified with deterministic/synthetic fixture scope."""
+    resume = generate_resume_metrics([])
+
+    assert "guarantees 100% compliance" not in resume
+
+    expected_scope = "In the deterministic synthetic context fixture, Adaptive remained within the configured 6000-token budget and achieved 100% source-hash-verified artifact recovery."
+    assert expected_scope in resume
+
+    assert "deterministic" in resume.lower()
+    assert "synthetic" in resume.lower()
+    assert "local benchmark" in resume.lower()
 

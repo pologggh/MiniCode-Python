@@ -195,6 +195,27 @@ def build_comparison_matrix(
     if adapt_rt_all is not True:
         invalid_reasons.append("Adaptive failed one or more common runtime tasks")
 
+    for version_label, rt_data in [("Baseline", base_data), ("Adaptive", adapt_data)]:
+        task_details = rt_data.get("categories", {}).get("runtime_tasks", {}).get("task_details", [])
+        if not task_details or len(task_details) < 5:
+            invalid_reasons.append(f"{version_label} runtime_tasks missing task_details (expected >= 5 tasks)")
+            continue
+        found_task5 = False
+        for t in task_details:
+            t_id = t.get("task_id", "")
+            if not t.get("completed"):
+                invalid_reasons.append(f"{version_label} task {t_id} completed is not True")
+            if t.get("error") is not None:
+                invalid_reasons.append(f"{version_label} task {t_id} error is not None: {t.get('error')}")
+            if t.get("tool_calls_count", 0) < 1:
+                invalid_reasons.append(f"{version_label} task {t_id} tool_calls_count < 1")
+            if t_id == "runtime-task-5-command-execution":
+                found_task5 = True
+                if not t.get("expected_marker_found"):
+                    invalid_reasons.append(f"{version_label} task {t_id} expected_marker_found is not True")
+        if not found_task5:
+            invalid_reasons.append(f"{version_label} missing runtime-task-5-command-execution in task_details")
+
     records: list[MetricRecord] = []
 
     # Category A: Skill Routing
@@ -784,7 +805,7 @@ def generate_markdown_report(
         f"4. **Verified Experience Precision**: Reached **{a_prec}** precision in Adaptive retrieval compared to **{b_prec}** unverified keyword matches in baseline.",
         f"5. **Deterministic Policy Block Rate**: Improved from **{b_block}** in baseline to **{a_block}** in Adaptive on the deterministic policy fixture, which enforces hard denials on destructive commands (`git reset --hard`, `rm -rf`).",
         f"6. **Sensitive Secret Leak Rate**: Reduced from **{b_sleak}** raw leakage on `.env` read to **{a_sleak}** via automatic secret redaction (`[REDACTED]`).",
-        "7. **Context Token Footprint & Budget Compliance**: Adaptive includes structured context metadata and recoverable artifact references, resulting in baseline per-turn prompt overhead slightly higher than plain text (743 vs 512 tokens, +45.1%). However, under heavy context pressure with large tool outputs (12k tokens), Adaptive guarantees 100% compliance with the identical 6,000 token budget limit via artifact offloading with 100% hash-verified recovery, whereas Baseline persisted oversized tool results through the existing ToolResultBudgetManager but lacked a first-class artifact recovery interface.",
+        "7. **Context Token Footprint & Budget Compliance**: Adaptive retained a larger prepared context on this deterministic fixture (743 vs 512 estimated tokens, +45.1%), while remaining within the same 6000-token budget and supporting first-class artifact recovery. In the deterministic synthetic context fixture, Adaptive remained within the configured 6000-token budget and achieved 100% source-hash-verified artifact recovery, whereas Baseline persisted oversized tool results through the existing ToolResultBudgetManager but lacked a first-class artifact recovery interface.",
         "",
         "## Adaptive-Only Capabilities",
         "",
@@ -792,13 +813,13 @@ def generate_markdown_report(
         "",
         "- **First-class Recoverable Context Artifacts**: While baseline possessed legacy disk persistence for tool outputs via `ToolResultBudgetManager`, Adaptive introduced first-class recoverable context artifacts with deterministic IDs (`ctx_*`), structured metadata, range retrieval, and load tools, verified with 100% SHA-256 hash match.",
         "- **Centralized Agent Team Orchestration**: Automated multi-role decomposition (Researcher, Coder, Tester, Reviewer) executed via a topological DAG with sibling concurrency and writer serialization under deterministic scheduler runtime verification.",
-        "- **Role Quality Gates**: Automated validation ensuring that code modifications cannot merge without passing test evidence (TestGate) and structured reviewer sign-off (ReviewGate).",
+        "- **Role Quality Gates**: TestGate and ReviewGate enforce team-level quality acceptance; when optional worktree isolation is enabled, only verified and approved patches are written back to the parent workspace.",
         "- **Tamper-Evident Security Audit Log**: Every tool execution is recorded in an append-only JSONL log with cryptographic SHA-256 hash chaining, verified via `verify_chain()`.",
         "- **Untrusted Content Taint Enforcement**: External tool results (e.g. web fetch, MCP outputs) are scanned for prompt injection attacks and wrapped with security boundaries.",
         "",
         "## Common Runtime Tasks",
         "",
-        "All 5 standard runtime tasks (code search, single-file edit, test command check, large result handling, and dangerous command gating) completed deterministically through real agent turn execution in both versions.",
+        "Both versions completed five neutral scripted runtime tasks: search, edit, test, large-result handling, and normal command execution.",
         "",
         "## Live Model Evaluation",
         "",
@@ -856,13 +877,13 @@ def generate_resume_metrics(records: list[MetricRecord]) -> str:
         "- **Skill Prompt Token Reduction**:",
         f"  - *Baseline*: ~{b_st_100} estimated tokens per task (100-skill catalog) | ~{b_st_500} estimated tokens (500-skill catalog).",
         f"  - *Adaptive*: ~{a_st_100} estimated tokens per task.",
-        f"  - *Impact*: **~{rel_st_100}** in prompt tokens exposed to model context while maintaining **{rec_val} relevant skill recall**.",
+        f"  - *Impact*: **~{rel_st_100}** in prompt tokens exposed to model context while maintaining **{rec_val} relevant skill recall** on deterministic synthetic fixtures.",
         "  - *Source*: `benchmarks/final_eval/worker.py:run_skill_routing_benchmark` & `minicode/skill_router.py`.",
         "",
         "- **Context Budget & Recoverable Artifact Offloading**:",
         "  - *Baseline*: Baseline persisted oversized tool results through the existing ToolResultBudgetManager but lacked a first-class artifact recovery interface. Adaptive added stable Artifact IDs and explicit bounded recovery.",
-        "  - *Adaptive*: Adaptive 包含结构化上下文元数据与可恢复 artifact 引用，单轮上下文基础开销略高于纯文本（743 vs 512 tokens, +45.1%），但在长上下文和大型工具输出场景下通过 offload 保证 100% 遵守 6000 token budget，且产物 100% 可恢复验证 (SHA-256 match).",
-        "  - *Impact*: Protected early critical architectural constraints and latest verification evidence under extreme context pressure without unrecoverable data loss.",
+        "  - *Adaptive*: Adaptive retained a larger prepared context on this deterministic fixture (743 vs 512 estimated tokens, +45.1%), while remaining within the same 6000-token budget and supporting first-class artifact recovery. In the deterministic synthetic context fixture, Adaptive remained within the configured 6000-token budget and achieved 100% source-hash-verified artifact recovery.",
+        "  - *Impact*: Protected early critical architectural constraints and latest verification evidence under extreme context pressure without unrecoverable data loss in deterministic synthetic benchmarks.",
         "  - *Source*: `minicode/context_budget.py` and `minicode/context_artifacts.py`.",
         "",
         "---",
@@ -870,13 +891,13 @@ def generate_resume_metrics(records: list[MetricRecord]) -> str:
         "### 2. Experience Memory & Knowledge Transfer",
         "",
         "- **Negative Transfer / Failure Leakage Elimination**:",
-        f"  - *Baseline*: Keyword-based memory search leaked past failure records into ~{b_leak} of normal coding queries.",
-        f"  - *Adaptive*: Outcome-aware memory gating achieved **{a_leak} failure leakage** and **{a_prec} verified experience precision** for standard task retrieval.",
+        f"  - *Baseline*: Keyword-based memory search leaked past failure records into ~{b_leak} of normal coding queries on deterministic memory fixtures.",
+        f"  - *Adaptive*: Outcome-aware memory gating achieved **{a_leak} failure leakage** and **{a_prec} verified experience precision** for standard task retrieval on deterministic evaluation fixtures.",
         "  - *Source*: `minicode/memory_injector.py` and `minicode/experience.py`.",
         "",
         "- **Experience Deduplication**:",
         "  - *Baseline*: Stored duplicate workflows without fingerprinting.",
-        "  - *Adaptive*: Deterministic SHA-256 fingerprinting successfully deduplicated 100% of redundant task resolutions.",
+        "  - *Adaptive*: Deterministic SHA-256 fingerprinting successfully deduplicated 100% of redundant task resolutions on local benchmark fixtures.",
         "  - *Source*: `minicode/experience.py:compute_experience_fingerprint`.",
         "",
         "---",
@@ -885,7 +906,7 @@ def generate_resume_metrics(records: list[MetricRecord]) -> str:
         "",
         "- **Topological DAG Multi-Agent Scheduling**:",
         "  - *Baseline*: Limited to single one-off `task` delegation.",
-        "  - *Adaptive*: Orchestrated 5-node subagent teams (Researcher, Coder, Tester, Reviewer) with parallel sibling research concurrency, workspace writer serialization locks, and automated quality gates (TestGate and ReviewGate) under deterministic scheduler runtime verification.",
+        "  - *Adaptive*: Orchestrated 5-node subagent teams (Researcher, Coder, Tester, Reviewer) with parallel sibling research concurrency, workspace writer serialization locks, and automated quality gates under deterministic scheduler runtime verification. TestGate and ReviewGate enforce team-level quality acceptance; when optional worktree isolation is enabled, only verified and approved patches are written back to the parent workspace.",
         "  - *Source*: `minicode/team_planner.py`, `minicode/team_scheduler.py`, `minicode/task_graph.py`.",
         "",
         "---",
@@ -899,7 +920,7 @@ def generate_resume_metrics(records: list[MetricRecord]) -> str:
         "",
         "- **Sensitive Data Redaction & Tamper-Evident Audit**:",
         f"  - *Baseline*: {b_sleak} secret leakage on `.env` file reads; zero audit chain.",
-        f"  - *Adaptive*: **{a_sleak} secret leakage** via automated API key masking, and **100% audit log verification** via append-only SHA-256 cryptographic hash chaining.",
+        f"  - *Adaptive*: **{a_sleak} secret leakage** via automated API key masking on deterministic test fixtures, and **100% audit log verification** via append-only SHA-256 cryptographic hash chaining in local benchmarks.",
         "  - *Source*: `minicode/redaction.py` and `minicode/security_audit.py`.",
     ]
     return "\n".join(lines)
