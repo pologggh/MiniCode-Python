@@ -129,8 +129,8 @@ def classify_tool_category(tool_name: str, input_data: Any = None) -> ToolCatego
         return ToolCategory.MCP
 
     if tool_name == "git" and isinstance(input_data, dict):
-        action = input_data.get("action", "")
-        if action == "commit":
+        action = str(input_data.get("action", "") or input_data.get("command", "") or "").lower()
+        if "commit" in action:
             return ToolCategory.GIT_WRITE
         return ToolCategory.GIT_READ
 
@@ -537,6 +537,7 @@ class SecurityPolicyEngine:
                 decision = SecurityDecision.ASK
                 risk = SecurityRisk.HIGH
                 rule_ids.append("taint_escalation_enforced")
+                rule_ids.append("untrusted_external_content_taint")
                 reasons.append("External untrusted content observed earlier in this turn; escalates to explicit approval")
                 if category == ToolCategory.LOCAL_WRITE:
                     route = ApprovalRoute.NATIVE_EDIT

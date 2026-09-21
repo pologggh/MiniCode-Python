@@ -15,7 +15,7 @@ import time
 from typing import Any
 import uuid
 
-from minicode.redaction import redact_payload
+from minicode.redaction import redact_payload, redact_text
 
 
 @dataclass(slots=True)
@@ -147,7 +147,7 @@ class SecurityAuditLog:
                 decision=decision,
                 risk=risk,
                 rule_ids=rule_ids or [],
-                reasons=reasons or [],
+                reasons=[redact_text(str(r)) for r in (reasons or [])],
                 input_digest=input_digest,
                 redacted_input_summary=redacted_summary,
                 result_ok=result_ok,
