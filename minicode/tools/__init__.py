@@ -129,7 +129,15 @@ def _load_utility_wrapper_tools():
     ]
 
 
-def create_default_tool_registry(cwd: str, runtime: dict | None = None) -> ToolRegistry:
+def create_default_tool_registry(
+    cwd: str,
+    runtime: dict | None = None,
+    security_policy: Any | None = None,
+    security_audit: Any | None = None,
+) -> ToolRegistry:
+    from minicode.security_policy import SecurityPolicyEngine
+    from minicode.security_audit import SecurityAuditLog
+
     skills = [asdict(skill) for skill in discover_skills(cwd)]
     mcp = create_mcp_backed_tools(cwd=cwd, mcp_servers=dict(runtime.get("mcpServers", {})) if runtime else {})
     profile = _resolve_tool_profile(runtime)
@@ -143,9 +151,14 @@ def create_default_tool_registry(cwd: str, runtime: dict | None = None) -> ToolR
             *mcp["tools"],
         ]
     )
+    policy = security_policy if security_policy is not None else SecurityPolicyEngine()
+    audit = security_audit if security_audit is not None else SecurityAuditLog()
     return ToolRegistry(
         tools,
         skills=skills,
         mcp_servers=mcp["servers"],
         disposer=mcp["dispose"],
+        security_policy=policy,
+        security_audit=audit,
     )
+

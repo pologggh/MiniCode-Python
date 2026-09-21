@@ -172,20 +172,33 @@ class SecurityAssessment:
 @dataclass
 class SecurityPolicyMetrics:
     evaluations: int = 0
+    policy_evaluations: int = 0
     allow_count: int = 0
+    allows: int = 0
     ask_count: int = 0
+    asks: int = 0
     deny_count: int = 0
+    denies: int = 0
     hard_denies: int = 0
+    generic_approval_requests: int = 0
+    permission_denials: int = 0
     sensitive_file_requests: int = 0
+    sensitive_reads: int = 0
     sensitive_file_denies: int = 0
+    sensitive_output_redactions: int = 0
     command_risk_events: int = 0
     mcp_requests: int = 0
     mcp_approval_requests: int = 0
+    mcp_denials: int = 0
+    external_outputs: int = 0
     untrusted_outputs: int = 0
     injection_detections: int = 0
+    taint_escalations: int = 0
     child_policy_denies: int = 0
     audit_events: int = 0
     audit_redactions: int = 0
+    audit_chain_failures: int = 0
+
 
 
 # ---------------------------------------------------------------------------

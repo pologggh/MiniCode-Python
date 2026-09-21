@@ -39,6 +39,9 @@ _ENV_SECRET_PATTERN = re.compile(
     r"(?im)^(?P<prefix>\s*[A-Za-z0-9_]*(?:SECRET|KEY|TOKEN|PASSWORD|AUTH|CREDENTIAL|PRIVATE)[A-Za-z0-9_]*\s*=\s*)(?P<val>[^\r\n]+)$"
 )
 
+# Database / Service URI password pattern: scheme://user:password@host
+_URI_PASSWORD_PATTERN = re.compile(r"(://[^:\s/?#]+:)([^@\s/?#]+)(@)", re.IGNORECASE)
+
 
 def redact_text(text: str, max_length: int | None = None) -> str:
     """Deterministically redact secrets from plain text.
@@ -52,8 +55,12 @@ def redact_text(text: str, max_length: int | None = None) -> str:
     # First pass: private key blocks
     cleaned = _PRIVATE_KEY_PATTERN.sub("[REDACTED_PRIVATE_KEY]", text)
 
-    # Second pass: Bearer tokens
+    # Second pass: URI passwords (e.g. postgres://user:password@host)
+    cleaned = _URI_PASSWORD_PATTERN.sub(r"\g<1>[REDACTED]\g<3>", cleaned)
+
+    # Third pass: Bearer tokens
     cleaned = _BEARER_PATTERN.sub(r"\g<1>[REDACTED_TOKEN]", cleaned)
+
 
     # Third pass: JWT tokens
     cleaned = _JWT_PATTERN.sub("[REDACTED_TOKEN]", cleaned)

@@ -339,7 +339,10 @@ class PermissionManager:
         self.ensure_path_access(command_cwd, "command_cwd")
         reason = force_prompt_reason or _classify_dangerous_command(command, args)
         if not reason:
-            # Not classified as dangerous — check auto mode for auto-approve
+            from minicode.security_rules import is_pure_readonly_command
+            if is_pure_readonly_command(command, args):
+                return
+            # Not classified as dangerous and not pure read-only: check auto mode
             _sig = _format_command_signature(command, args)
             assessment = self.auto_checker.assess_risk("run_command", {"command": [command] + args})
             if assessment.action == "approve":
@@ -350,13 +353,14 @@ class PermissionManager:
                 get_mode_state().record_decision("block")
                 log_permission_check("run_command", _sig, granted=False)
                 raise RuntimeError(f"Command blocked by auto mode: {assessment.reason}")
-            # action == "prompt" — fall through to normal approval flow
-            return
+            # action == "prompt": requires approval in DEFAULT mode!
+            reason = f"Command requires approval in {self.auto_checker.mode.value} mode"
         signature = _format_command_signature(command, args)
         if signature in self.session_denied_commands or signature in self.denied_command_patterns:
             raise RuntimeError(f"Command denied: {signature}")
         if signature in self.session_allowed_commands or signature in self.allowed_command_patterns:
             return
+
         
         # Auto mode risk assessment for dangerous commands
         assessment = self.auto_checker.assess_risk("run_command", {"command": [command] + args})
@@ -479,6 +483,48 @@ class PermissionManager:
         else:
             self.session_denied_edits.add(normalized_target)
         raise RuntimeError(f"Edit denied: {normalized_target}")
+
+    def ensure_tool_action(
+        self,
+        tool_name: str,
+        scope: str = "",
+        summary: str = "",
+        details: list[str] | None = None,
+    ) -> None:
+        """Generic permission gate for tools without native checkpoints (MCP, batch ops, git commit)."""
+        if tool_name in self.session_denied_commands:
+            raise RuntimeError(f"Tool action denied: {tool_name}")
+        if tool_name in self.session_allowed_commands:
+            return
+
+        if self.prompt is None:
+            raise RuntimeError(
+                f"Tool action requires approval: {tool_name}. Start minicode in TTY mode to approve it."
+            )
+        result = self.prompt(
+            {
+                "kind": "tool_action",
+                "summary": summary or f"mini-code wants to run tool '{tool_name}'",
+                "details": details or [f"tool: {tool_name}", f"scope: {scope}"],
+                "scope": scope or tool_name,
+                "choices": [
+                    {"key": "y", "label": "allow once", "decision": "allow_once"},
+                    {"key": "t", "label": "allow in this turn", "decision": "allow_turn"},
+                    {"key": "n", "label": "deny once", "decision": "deny_once"},
+                    {"key": "d", "label": "deny with feedback", "decision": "deny_with_feedback"},
+                ],
+            }
+        )
+        decision = result.get("decision")
+        if decision in {"allow_once", "allow_turn"}:
+            self.session_allowed_commands.add(tool_name)
+            return
+        if decision == "deny_with_feedback":
+            feedback = str(result.get("feedback", "")).strip()
+            raise RuntimeError(f"Tool action denied: {tool_name}\nUser feedback: {feedback}")
+        self.session_denied_commands.add(tool_name)
+        raise RuntimeError(f"Tool action denied: {tool_name}")
+
 
 
 class PermissionGate:
