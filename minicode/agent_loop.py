@@ -914,6 +914,7 @@ def run_agent_turn(
     # Prelude: prepare per-turn state before we enter the recurrent think/act loop.
     current_messages = list(messages)
     runtime = runtime if runtime is not None else {}
+    runtime["_security_untrusted_seen"] = False
     configured_runtime_model = (
         str(runtime.get("configuredModel", "")).strip()
         or str(runtime.get("model", "")).strip()
