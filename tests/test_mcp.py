@@ -194,3 +194,14 @@ def test_prepare_spawn_is_list_on_posix(
 
     assert extra == {}
     assert spawn_exec == ["npx", "-y", "pkg"]
+
+
+def test_validate_mcp_command_rejects_prefix_spoofing() -> None:
+    # Prefix attack: /usr/bin-malicious/evil must NOT match /usr/bin
+    with pytest.raises(RuntimeError, match="not in the allowed list"):
+        mcp_module._validate_mcp_command("/usr/bin-malicious/evil_executable")
+
+    # Prefix attack on Windows: C:\Windows\System32-evil\malware.exe must NOT match C:\Windows\System32
+    with pytest.raises(RuntimeError, match="not in the allowed list"):
+        mcp_module._validate_mcp_command("C:\\Windows\\System32-evil\\malware.exe")
+

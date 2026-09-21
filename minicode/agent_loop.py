@@ -914,6 +914,9 @@ def run_agent_turn(
     # Prelude: prepare per-turn state before we enter the recurrent think/act loop.
     current_messages = list(messages)
     runtime = runtime if runtime is not None else {}
+    runtime["_security_untrusted_seen"] = False
+    if permissions is not None and hasattr(permissions, "begin_turn"):
+        permissions.begin_turn()
     configured_runtime_model = (
         str(runtime.get("configuredModel", "")).strip()
         or str(runtime.get("model", "")).strip()
@@ -2414,6 +2417,8 @@ def run_agent_turn(
         current_messages.append({"role": "assistant", "content": fallback})
         return current_messages
     finally:
+        if permissions is not None and hasattr(permissions, "end_turn"):
+            permissions.end_turn()
         # Emit the terminal snapshot before coda bookkeeping so every return
         # path (including an exception) produces exactly one structured Done
         # event with the messages accumulated by the loop.

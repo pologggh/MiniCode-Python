@@ -93,7 +93,21 @@ def _validate_mcp_command(command: str) -> None:
                 'C:\\Windows\\System32',
             ])
         
-        is_in_allowed_dir = any(normalized.lower().startswith(d.lower()) for d in allowed_system_dirs)
+        is_in_allowed_dir = False
+        resolved_cmd_path = Path(command).resolve()
+        for d in allowed_system_dirs:
+            try:
+                resolved_d = Path(d).resolve()
+                if resolved_cmd_path.is_relative_to(resolved_d):
+                    is_in_allowed_dir = True
+                    break
+            except Exception:
+                pass
+            norm_str = normalized.lower()
+            d_norm = Path(d).as_posix().lower()
+            if norm_str == d_norm or norm_str.startswith(d_norm.rstrip('/') + '/'):
+                is_in_allowed_dir = True
+                break
         
         # 不在允许的系统目录且不在白名单中
         if not is_in_allowed_dir and base_command not in ALLOWED_COMMANDS:

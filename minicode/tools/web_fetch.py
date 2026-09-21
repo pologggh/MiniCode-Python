@@ -9,20 +9,49 @@ MAX_REDIRECTS = 5  # 限制重定向次数防止 SSRF
 
 
 def _is_safe_url(url: str) -> tuple[bool, str]:
-    """检查 URL 是否安全（非内网地址）"""
+    """Check if URL is safe (not targeting internal, loopback, or private addresses via IP or DNS)."""
     try:
+        import ipaddress
+        import socket
         from urllib.parse import urlparse
+
         parsed = urlparse(url)
         hostname = parsed.hostname
-        
+
         if not hostname:
             return False, "Invalid URL: no hostname"
-        
-        # 阻止本地和內网地址
-        blocked_prefixes = ["localhost", "127.", "10.", "192.168.", "172.16.", "0.0.0.0", "::1", "fe80:"]
-        if any(hostname.startswith(p) for p in blocked_prefixes):
-            return False, f"Access to internal addresses blocked: {hostname}"
-        
+
+        hostname_lower = hostname.lower()
+        if hostname_lower in {"localhost", "localhost.localdomain"}:
+            return False, f"Access to localhost blocked: {hostname}"
+
+        # Resolve hostname to IP addresses via DNS
+        try:
+            addr_info = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+        except socket.gaierror as e:
+            return False, f"DNS resolution failed for {hostname}: {e}"
+
+        if not addr_info:
+            return False, f"No IP addresses resolved for {hostname}"
+
+        for entry in addr_info:
+            sockaddr = entry[4]
+            ip_str = sockaddr[0]
+            ip = ipaddress.ip_address(ip_str)
+
+            if ip.is_loopback:
+                return False, f"Loopback address blocked: {ip_str} ({hostname})"
+            if ip.is_private:
+                return False, f"Private network address blocked: {ip_str} ({hostname})"
+            if ip.is_link_local:
+                return False, f"Link-local address blocked: {ip_str} ({hostname})"
+            if ip.is_multicast:
+                return False, f"Multicast address blocked: {ip_str} ({hostname})"
+            if ip.is_reserved:
+                return False, f"Reserved address blocked: {ip_str} ({hostname})"
+            if ip.is_unspecified:
+                return False, f"Unspecified address blocked: {ip_str} ({hostname})"
+
         return True, "OK"
     except Exception as e:
         return False, f"URL validation failed: {e}"
@@ -44,7 +73,7 @@ def _run(input_data: dict, context) -> ToolResult:
     url = input_data["url"]
     max_chars = input_data["max_chars"]
 
-    # SSRF 防护：检查 URL 安全性
+    # SSRF Protection: verify target URL
     is_safe, reason = _is_safe_url(url)
     if not is_safe:
         return ToolResult(ok=False, output=f"Security Error: {reason}\nURL: {url}")
@@ -58,7 +87,7 @@ def _run(input_data: dict, context) -> ToolResult:
             },
         )
 
-        # 限制重定向次数
+        # 限制重定向次数并在重定向时再次校验目标地址
         class LimitedRedirectHandler(urllib.request.HTTPRedirectHandler):
             def __init__(self):
                 self.redirect_count = 0
@@ -67,7 +96,14 @@ def _run(input_data: dict, context) -> ToolResult:
                 self.redirect_count += 1
                 if self.redirect_count > MAX_REDIRECTS:
                     raise urllib.error.HTTPError(req.full_url, code, f"Too many redirects (>{MAX_REDIRECTS})", msg, fp)
+                # Re-validate redirect target address
+                is_redir_safe, redir_reason = _is_safe_url(newurl)
+                if not is_redir_safe:
+                    raise urllib.error.HTTPError(
+                        req.full_url, 403, f"Redirect to unsafe address blocked: {redir_reason}", headers, fp
+                    )
                 return urllib.request.HTTPRedirectHandler.redirect_request(self, req, fp, code, msg, headers, newurl)
+
 
         opener = urllib.request.build_opener(LimitedRedirectHandler())
         

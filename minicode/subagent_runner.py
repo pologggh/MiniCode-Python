@@ -176,6 +176,9 @@ def run_subagent(config: SubAgentRunConfig) -> SubAgentResult:
     # 2. Runtime & MCP Isolation
     child_runtime: dict[str, Any] = dict(config.runtime or {})
     child_runtime["mcpServers"] = {}
+    child_runtime["_security_actor"] = "CHILD"
+    child_runtime["_security_role"] = config.role
+    child_runtime["_security_depth"] = config.depth + 1
 
     cwd = config.cwd or "."
 
@@ -200,7 +203,11 @@ def run_subagent(config: SubAgentRunConfig) -> SubAgentResult:
     else:
         filtered_tools = [t for t in full_tools.list() if t.name not in FORBIDDEN_CHILD_TOOLS]
 
-    tools = ToolRegistry(filtered_tools)
+    tools = ToolRegistry(
+        filtered_tools,
+        security_policy=full_tools.security_policy,
+        security_audit=full_tools.security_audit,
+    )
 
     # 4. Model Adapter
     model_identifier = config.model_name or child_runtime.get("model", "")
@@ -279,6 +286,7 @@ def run_subagent(config: SubAgentRunConfig) -> SubAgentResult:
             messages=sub_messages,
             cwd=cwd,
             permissions=sub_permissions,
+            runtime=child_runtime,
             max_steps=config.max_turns,
         )
     except Exception as e:

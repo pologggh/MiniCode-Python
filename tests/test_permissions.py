@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 import minicode.permissions as permissions_module
+from minicode.auto_mode import PermissionMode
 from minicode.permissions import PermissionManager, _classify_dangerous_command, _is_within_directory
 
 
@@ -182,3 +183,128 @@ def test_windows_style_directory_match_is_case_insensitive(monkeypatch: pytest.M
     monkeypatch.setattr(permissions_module, "_is_win", True)
 
     assert _is_within_directory("/Users/Alice/Repo", "/users/alice/repo/src/main.py")
+
+
+def test_ensure_tool_action_scoped_lifecycle(tmp_path: Path) -> None:
+    prompts: list[dict] = []
+    current_decision = "allow_once"
+
+    def prompt(request: dict):
+        prompts.append(request)
+        return {"decision": current_decision}
+
+    manager = PermissionManager(str(tmp_path), prompt=prompt)
+    manager.begin_turn()
+
+    # 1. allow_once does not cache for subsequent calls
+    current_decision = "allow_once"
+    manager.ensure_tool_action("batch_copy", scope="src/ -> dst1/")
+    assert len(prompts) == 1
+    # Next call with same scope must prompt again because allow_once was not cached
+    manager.ensure_tool_action("batch_copy", scope="src/ -> dst1/")
+    assert len(prompts) == 2
+
+    # 2. allow_turn caches for the remainder of the turn for matching scope
+    current_decision = "allow_turn"
+    manager.ensure_tool_action("batch_delete", scope="build/")
+    assert len(prompts) == 3
+    # Same tool, same scope in same turn -> does not prompt again
+    manager.ensure_tool_action("batch_delete", scope="build/")
+    assert len(prompts) == 3
+
+    # 3. Different scope under allow_turn does NOT reuse cache
+    current_decision = "allow_once"
+    manager.ensure_tool_action("batch_delete", scope="dist/")
+    assert len(prompts) == 4
+
+    # 4. Turn boundary clears turn_allowed_tool_actions
+    manager.end_turn()
+    manager.begin_turn()
+    current_decision = "allow_once"
+    # Previously allowed-for-turn scope "build/" must prompt again in new turn!
+    manager.ensure_tool_action("batch_delete", scope="build/")
+    assert len(prompts) == 5
+
+    # 5. deny_once raises RuntimeError but does not poison other scopes
+    current_decision = "deny_once"
+    with pytest.raises(RuntimeError, match="Tool action denied"):
+        manager.ensure_tool_action("mcp__run", scope="dangerous_query")
+    assert len(prompts) == 6
+
+    # Subsequent call with different scope can still be allowed
+    current_decision = "allow_once"
+    manager.ensure_tool_action("mcp__run", scope="safe_query")
+    assert len(prompts) == 7
+
+
+def test_native_allow_once_does_not_cache_in_session(tmp_path: Path) -> None:
+    """Verify that allow_once across command, edit, and path access does NOT cache into session."""
+    prompts: list[dict] = []
+    current_decision = "allow_once"
+
+    def prompt(request: dict):
+        prompts.append(request)
+        return {"decision": current_decision}
+
+    manager = PermissionManager(str(tmp_path), prompt=prompt, auto_mode=PermissionMode.DEFAULT)
+
+    # 1. ensure_command: allow_once
+    current_decision = "allow_once"
+    manager.ensure_command("pytest", ["tests/"], str(tmp_path))
+    assert len(prompts) == 1
+
+    # Second call with same command must prompt again!
+    manager.ensure_command("pytest", ["tests/"], str(tmp_path))
+    assert len(prompts) == 2
+
+    # allow_always persists
+    current_decision = "allow_always"
+    manager.ensure_command("pytest", ["tests/"], str(tmp_path))
+    assert len(prompts) == 3
+
+    # Subsequent call does not prompt
+    manager.ensure_command("pytest", ["tests/"], str(tmp_path))
+    assert len(prompts) == 3
+
+    # 2. ensure_edit: allow_once
+    test_file = str(tmp_path / "app.py")
+    current_decision = "allow_once"
+    manager.ensure_edit(test_file, "+ line 1")
+    assert len(prompts) == 4
+
+    # Second call with same edit must prompt again!
+    manager.ensure_edit(test_file, "+ line 2")
+    assert len(prompts) == 5
+
+    # allow_always persists
+    current_decision = "allow_always"
+    manager.ensure_edit(test_file, "+ line 3")
+    assert len(prompts) == 6
+
+    # Subsequent edit to same file does not prompt
+    manager.ensure_edit(test_file, "+ line 4")
+    assert len(prompts) == 6
+
+    # 3. ensure_path_access: allow_once
+    outside_dir = tmp_path.parent / "outside_dir"
+    outside_dir.mkdir(exist_ok=True)
+    outside_file = str(outside_dir / "data.txt")
+
+    current_decision = "allow_once"
+    manager.ensure_path_access(outside_file, "read")
+    assert len(prompts) == 7
+
+    # Second access to same path must prompt again!
+    manager.ensure_path_access(outside_file, "read")
+    assert len(prompts) == 8
+
+    # allow_always persists
+    current_decision = "allow_always"
+    manager.ensure_path_access(outside_file, "read")
+    assert len(prompts) == 9
+
+    # Subsequent access does not prompt
+    manager.ensure_path_access(outside_file, "read")
+    assert len(prompts) == 9
+
+
