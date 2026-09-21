@@ -91,137 +91,67 @@ def _validate(input_data: dict) -> dict:
 
 
 def _run(input_data: dict, context) -> ToolResult:
-    """Execute a sub-agent task.
-    
-    This creates an isolated agent loop with:
-    - Its own message history (system + task prompt)
-    - Filtered tools based on agent type
-    - A turn limit
-    - Result summarized for the parent context
-    """
-    from minicode.model_registry import create_model_adapter
-    from minicode.permissions import PermissionManager
-    from minicode.tools import create_default_tool_registry
-    
+    """Execute a sub-agent task via SubAgentRunner."""
+    from minicode.subagent_runner import SubAgentRunConfig, run_subagent
+
     agent_type = input_data["agent_type"]
     agent_def = AGENT_TYPES[agent_type]
     task_prompt = input_data["prompt"]
-    
-    # Try to get the model from context or fall back to creating one
-    # The context object carries runtime info needed for the model adapter
+
     runtime = None
-    model = None
-    
-    # Attempt to extract runtime from the ToolContext
-    if hasattr(context, '_runtime') and context._runtime:
+    if hasattr(context, "_runtime") and context._runtime:
         runtime = context._runtime
-    
+
     if not runtime:
-        # Try loading from config
         try:
             from minicode.config import load_runtime_config
             runtime = load_runtime_config(context.cwd)
         except Exception:
             pass
-    
+
     if not runtime:
         return ToolResult(
             ok=False,
-            output="Cannot run sub-agent: no model configuration available. Set ANTHROPIC_API_KEY and ANTHROPIC_MODEL."
+            output="Cannot run sub-agent: no model configuration available. Set ANTHROPIC_API_KEY and ANTHROPIC_MODEL.",
         )
-    
-    # Create a filtered tool registry for this agent type
-    full_tools = create_default_tool_registry(context.cwd, runtime=runtime)
-    allowed = agent_def["allowed_tools"]
-    
-    if allowed is not None:
-        filtered_tools = [t for t in full_tools.list() if t.name in allowed]
-        from minicode.tooling import ToolRegistry
-        tools = ToolRegistry(filtered_tools)
-    else:
-        tools = full_tools
-    
-    # Create model adapter
-    model = create_model_adapter(
-        model=runtime.get("model", ""),
-        tools=tools,
+
+    is_writer = agent_def["allowed_tools"] is None
+    parent_depth = getattr(context, "depth", 0) if hasattr(context, "depth") else 0
+
+    config = SubAgentRunConfig(
+        name=agent_def["name"],
+        role=agent_type,
+        task_prompt=task_prompt,
+        system_prompt=agent_def["system_prompt"],
+        allowed_tools=agent_def["allowed_tools"],
+        max_turns=agent_def["max_turns"],
+        cwd=context.cwd,
         runtime=runtime,
+        parent_permissions=getattr(context, "permissions", None),
+        depth=parent_depth,
+        is_writer=is_writer,
     )
-    
-    # Create isolated permissions (no prompts — auto-deny writes for read-only agents)
-    if agent_def["allowed_tools"] is not None:
-        # Read-only agent: create permission manager that denies writes
-        sub_permissions = PermissionManager(context.cwd, prompt=None)
-    else:
-        # General agent: inherit parent's permission prompt handler
-        sub_permissions = PermissionManager(context.cwd, prompt=getattr(context.permissions, 'prompt', None))
-    
-    # Build isolated message list
-    sub_messages: list[ChatMessage] = cast(list[ChatMessage], [
-        {
-            "role": "system",
-            "content": agent_def["system_prompt"]
-            + f"\n\nCurrent cwd: {context.cwd}"
-            + "\n\nIMPORTANT: When you have completed your task, end with <final> and provide your findings."
-            + " Do not ask the user questions — work autonomously with the tools available."
-            + " Be concise and focused."
-        },
-        {
-            "role": "user",
-            "content": task_prompt,
-        },
-    ])
-    
-    # Run the sub-agent loop
-    start_time = time.time()
-    max_turns = agent_def["max_turns"]
-    
-    try:
-        result_messages = run_agent_turn(
-            model=model,
-            tools=tools,
-            messages=sub_messages,
-            cwd=context.cwd,
-            permissions=sub_permissions,
-            max_steps=max_turns,
-        )
-    except Exception as e:
-        return ToolResult(
-            ok=False,
-            output=f"Sub-agent ({agent_def['name']}) failed: {type(e).__name__}: {e}"
-        )
-    
-    elapsed = time.time() - start_time
-    
-    # Extract the final assistant message as the result
-    final_message = None
-    for msg in reversed(result_messages):
-        if msg.get("role") == "assistant" and msg.get("content", "").strip():
-            final_message = msg["content"]
-            break
-    
-    if not final_message:
-        final_message = "(sub-agent completed without a final message)"
-    
-    # Build summary
-    tool_calls_count = sum(1 for m in result_messages if m.get("role") == "assistant_tool_call")
-    user_messages_count = sum(1 for m in result_messages if m.get("role") == "user")
-    
+
+    sub_res = run_subagent(config)
+
+    if not sub_res.ok:
+        return ToolResult(ok=False, output=sub_res.output)
+
     header = (
         f"[Sub-agent {agent_def['name']} completed]\n"
         f"  Type: {agent_type}\n"
-        f"  Turns: {user_messages_count} (tool calls: {tool_calls_count})\n"
-        f"  Duration: {elapsed:.1f}s\n"
-        f"  Max turns: {max_turns}\n"
+        f"  Turns: {sub_res.turn_count} (tool calls: {sub_res.tool_calls_count})\n"
+        f"  Duration: {sub_res.elapsed_seconds:.1f}s\n"
+        f"  Max turns: {agent_def['max_turns']}\n"
     )
-    
-    # Truncate very long results
-    result_text = final_message
+
+    result_text = sub_res.final_message
     MAX_RESULT_LEN = 8000
     if len(result_text) > MAX_RESULT_LEN:
-        result_text = result_text[:MAX_RESULT_LEN] + f"\n\n... (truncated, {len(final_message)} chars total)"
-    
+        result_text = result_text[:MAX_RESULT_LEN] + f"\n\n... (truncated, {len(sub_res.final_message)} chars total)"
+
     return ToolResult(ok=True, output=header + "\n" + result_text)
+
 
 
 task_tool = ToolDefinition(

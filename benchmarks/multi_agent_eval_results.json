@@ -1,0 +1,301 @@
+{
+  "benchmark": "Phase 4.2 Centralized Multi-Agent Orchestration",
+  "timestamp": "2026-09-21 10:49:58",
+  "all_cases_passed": true,
+  "total_cases": 12,
+  "passed_cases": 12,
+  "total_metrics": 20,
+  "passed_metrics": 20,
+  "metrics": {
+    "parent_context_isolation_pass_rate": {
+      "numerator": 1,
+      "denominator": 1,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "dependency_satisfaction_rate": {
+      "numerator": 5,
+      "denominator": 5,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "plan_validity_rate": {
+      "numerator": 7,
+      "denominator": 7,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "role_tool_conformance_rate": {
+      "numerator": 4,
+      "denominator": 4,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "nested_agent_exposure_rate": {
+      "numerator": 0,
+      "denominator": 4,
+      "rate": 0.0,
+      "target": 0.0,
+      "comparison": "lte",
+      "passed": true
+    },
+    "mcp_leakage_rate": {
+      "numerator": 0,
+      "denominator": 4,
+      "rate": 0.0,
+      "target": 0.0,
+      "comparison": "lte",
+      "passed": true
+    },
+    "read_only_parallelization_rate": {
+      "numerator": 1,
+      "denominator": 1,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "writer_serialization_rate": {
+      "numerator": 1,
+      "denominator": 1,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "writer_reader_overlap_violation_rate": {
+      "numerator": 0,
+      "denominator": 1,
+      "rate": 0.0,
+      "target": 0.0,
+      "comparison": "lte",
+      "passed": true
+    },
+    "test_gate_accuracy": {
+      "numerator": 7,
+      "denominator": 7,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "review_gate_accuracy": {
+      "numerator": 4,
+      "denominator": 4,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "replan_boundedness_rate": {
+      "numerator": 1,
+      "denominator": 1,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "child_failure_containment_rate": {
+      "numerator": 1,
+      "denominator": 1,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "worktree_parent_dirty_rejection_rate": {
+      "numerator": 1,
+      "denominator": 1,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "parent_workspace_race_protection_rate": {
+      "numerator": 1,
+      "denominator": 1,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "patch_verify_fail_closed_rate": {
+      "numerator": 1,
+      "denominator": 1,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "permission_denial_protection_rate": {
+      "numerator": 1,
+      "denominator": 1,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "missing_permission_fail_closed_rate": {
+      "numerator": 1,
+      "denominator": 1,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    },
+    "failed_patch_leakage_rate": {
+      "numerator": 0,
+      "denominator": 3,
+      "rate": 0.0,
+      "target": 0.0,
+      "comparison": "lte",
+      "passed": true
+    },
+    "verified_patch_apply_rate": {
+      "numerator": 1,
+      "denominator": 1,
+      "rate": 1.0,
+      "target": 1.0,
+      "comparison": "gte",
+      "passed": true
+    }
+  },
+  "cases": [
+    {
+      "case_id": "case_1",
+      "name": "Parent Agent Turn & Context Isolation",
+      "passed": true,
+      "metrics": {
+        "raw_child_context_bytes": 16500,
+        "parent_tool_result_bytes": 531,
+        "raw_history_leak_count": 0,
+        "dispatched": true,
+        "isolated": true
+      },
+      "details": "Child context: 16500 bytes; Parent tool result: 531 bytes; Raw history leaks: 0."
+    },
+    {
+      "case_id": "case_2",
+      "name": "DAG Planning & Dependency Satisfaction",
+      "passed": true,
+      "metrics": {
+        "node_count": 5,
+        "satisfied_deps": 5,
+        "total_deps": 5
+      },
+      "details": "Dependencies satisfied: 5/5 across canonical 5-node DAG."
+    },
+    {
+      "case_id": "case_3",
+      "name": "Plan Validation Engine",
+      "passed": true,
+      "metrics": {
+        "checks_passed": 7,
+        "total_checks": 7
+      },
+      "details": "Plan validation checks: 7/7 passed."
+    },
+    {
+      "case_id": "case_4",
+      "name": "Role Tool Conformance Audit",
+      "passed": true,
+      "metrics": {
+        "conforming_roles": 4,
+        "total_roles": 4
+      },
+      "details": "Audited all role policies: 4/4 roles conform."
+    },
+    {
+      "case_id": "case_5",
+      "name": "Nested Agent Exposure & MCP Isolation",
+      "passed": true,
+      "metrics": {
+        "nested_tool_exposures": 0,
+        "mcp_leakages": 0,
+        "inspected_registries": 4
+      },
+      "details": "Nested tool exposures: 0/4; MCP leakages: 0/4."
+    },
+    {
+      "case_id": "case_6",
+      "name": "Read-Only Parallelization",
+      "passed": true,
+      "metrics": {
+        "max_concurrent_readers": 2,
+        "speedup_factor": 1.97
+      },
+      "details": "Max concurrent readers: 2, speedup: 1.97x."
+    },
+    {
+      "case_id": "case_7",
+      "name": "Writer Serialization & Zero Overlap",
+      "passed": true,
+      "metrics": {
+        "max_concurrent_writers": 1,
+        "overlap_violations": 0
+      },
+      "details": "Max concurrent writers: 1, overlap violations: 0."
+    },
+    {
+      "case_id": "case_8",
+      "name": "TestGate Accuracy & Adversarial Matrix",
+      "passed": true,
+      "metrics": {
+        "checks_passed": 7,
+        "total_checks": 7
+      },
+      "details": "Test gate checks: 7/7 passed."
+    },
+    {
+      "case_id": "case_9",
+      "name": "ReviewGate Accuracy & Replan Boundedness",
+      "passed": true,
+      "metrics": {
+        "review_checks": 4,
+        "total_review_checks": 4,
+        "replan_bounded": true
+      },
+      "details": "Review checks: 4/4; Replan bounded to 1: True."
+    },
+    {
+      "case_id": "case_10",
+      "name": "Child Failure Containment",
+      "passed": true,
+      "metrics": {
+        "cascade_contained": true
+      },
+      "details": "Upstream failure cascade skipped dependents cleanly: True."
+    },
+    {
+      "case_id": "case_11",
+      "name": "Worktree Pre-Execution & Race Protection",
+      "passed": true,
+      "metrics": {
+        "dirty_rejected": true,
+        "fingerprint_protected": true,
+        "verify_failed": true
+      },
+      "details": "Dirty rejection: True; Race protection: True; Verify fail-closed: True."
+    },
+    {
+      "case_id": "case_12",
+      "name": "Permission Gates, Leakage & Verified Patch Apply",
+      "passed": true,
+      "metrics": {
+        "perm_denial_protected": true,
+        "missing_perm_protected": true,
+        "failed_patch_leaks": 0,
+        "verified_patch_applied": true
+      },
+      "details": "Perm denial protected: True; Missing perm protected: True; Failed patch leaks: 0/3; Verified patch applied: True."
+    }
+  ]
+}

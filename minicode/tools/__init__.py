@@ -25,6 +25,7 @@ from minicode.tools.web_fetch import web_fetch_tool
 from minicode.tools.web_search import web_search_tool
 from minicode.tools.write_file import write_file_tool
 from minicode.tools.task import task_tool
+from minicode.tools.agent_team import agent_team_tool
 
 
 _CORE_TOOLS = [
@@ -51,6 +52,7 @@ _CORE_TOOLS = [
     todo_write_tool,
     # Sub-agent
     task_tool,
+    agent_team_tool,
     # Git workflow
     git_tool,
     # Code intelligence
