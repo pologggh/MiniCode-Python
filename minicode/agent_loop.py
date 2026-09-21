@@ -53,7 +53,9 @@ from minicode.self_healing_engine import SelfHealingEngine
 from minicode.progress_controller import ProgressSignal, ProgressAction
 
 # 记忆注入和模型选择控制
-from minicode.memory_injector import MemoryInjectionSignal, MemoryInjector
+from minicode.memory_injector import MemoryInjectionSignal, MemoryInjector, InjectedMemory
+from minicode.execution_trace import ExecutionTrace, is_explicit_verification_command
+from minicode.experience import ExperienceExtractor, ExperienceQualityGate, ExperienceOutcome, experience_to_memory_entry
 from minicode.model_registry import ModelSelectionSignal
 
 # 智能路由与自省 (Phase 3 导入)
@@ -734,6 +736,149 @@ def _apply_control_signal(
     return max_steps
 
 
+def _finalize_experience_memory(
+    active_execution_trace: ExecutionTrace,
+    turn_state: Any,
+    coda_summary: Any,
+    task_desc: str,
+    orch: Any | None,
+    reflection_engine: Any | None,
+    memory_mgr: Any | None,
+    turn_injected_memories: list[InjectedMemory],
+) -> None:
+    """Finalize execution trace, extract structured experience, and route feedback."""
+    # 1. Determine terminal status and summary
+    stop_reason = str(getattr(turn_state, "stop_reason", "") or (getattr(coda_summary, "stop_reason", "") if coda_summary else "") or "")
+    is_aborted = "aborted" in stop_reason.lower() or "cancel" in stop_reason.lower()
+    is_blocked = "blocked" in stop_reason.lower() or "permission" in stop_reason.lower()
+
+    tool_error_count = getattr(turn_state, "tool_error_count", 0)
+    if is_aborted:
+        status = "aborted"
+    elif is_blocked:
+        status = "blocked"
+    elif coda_summary and getattr(coda_summary, "task_state", None) is TaskState.COMPLETED and tool_error_count == 0:
+        status = "completed"
+    elif not coda_summary and tool_error_count == 0 and not is_aborted:
+        status = "completed"
+    else:
+        status = "failed"
+
+    summary = (
+        (getattr(coda_summary, "result_summary", None) if coda_summary else None)
+        or stop_reason
+        or f"Turn finished with status={status}"
+    )
+    active_execution_trace.record_task_end(status=status, summary=summary)
+    real_trace_dicts = active_execution_trace.to_dict_list()
+
+    # 2. Reflection
+    if orch and hasattr(orch, "reflect_on_task") and task_desc:
+        try:
+            orch.reflect_on_task(
+                task_description=task_desc,
+                step=getattr(turn_state, "step", 0),
+                tool_error_count=tool_error_count,
+                execution_trace=real_trace_dicts,
+            )
+        except Exception:
+            pass
+    elif reflection_engine and task_desc:
+        try:
+            reflection = reflection_engine.reflect(
+                task_description=task_desc,
+                execution_trace=active_execution_trace,
+            )
+            logger.info(
+                "AgentReflection: success=%s confidence=%.2f lessons=%d improvements=%d",
+                reflection.success, reflection.confidence,
+                len(reflection.lessons_learned), len(reflection.suggested_improvements),
+            )
+        except Exception:
+            pass
+
+    # 3. Structured Experience Extraction and Persistence
+    exp_record = None
+    try:
+        exp_extractor = ExperienceExtractor()
+        exp_record = exp_extractor.extract(active_execution_trace)
+        if exp_record:
+            gate = ExperienceQualityGate()
+            can_persist, reason = gate.should_persist(exp_record, active_execution_trace)
+            if can_persist:
+                if orch and getattr(orch, "memory_pipeline", None):
+                    orch.memory_pipeline.write_experience(exp_record)
+                elif memory_mgr:
+                    from minicode.memory import MemoryScope
+                    exists = False
+                    if exp_record.fingerprint and MemoryScope.PROJECT in memory_mgr.memories:
+                        for entry in memory_mgr.memories[MemoryScope.PROJECT].entries:
+                            if entry.metadata and entry.metadata.get("fingerprint") == exp_record.fingerprint:
+                                if not isinstance(entry.metadata, dict):
+                                    entry.metadata = {}
+                                obs = entry.metadata.get("observation_count", 1) + 1
+                                entry.metadata["observation_count"] = obs
+                                if "experience" in entry.metadata and isinstance(entry.metadata["experience"], dict):
+                                    entry.metadata["experience"]["observation_count"] = obs
+                                entry.last_accessed = time.time()
+                                entry.updated_at = time.time()
+                                memory_mgr._save_scope(MemoryScope.PROJECT)
+                                exists = True
+                                break
+                    if not exists:
+                        new_entry = experience_to_memory_entry(exp_record, scope=MemoryScope.PROJECT)
+                        memory_mgr.memories[MemoryScope.PROJECT].add_entry(new_entry)
+                        memory_mgr._save_scope(MemoryScope.PROJECT)
+                logger.info(
+                    "ExperienceMemory: persisted %s outcome=%s confidence=%.2f",
+                    exp_record.task_type, exp_record.outcome.value, exp_record.confidence,
+                )
+            else:
+                logger.debug("ExperienceMemory: rejected by quality gate (%s)", reason)
+                if orch and getattr(orch, "memory_pipeline", None):
+                    orch.memory_pipeline.metrics.experiences_rejected += 1
+    except Exception:
+        logger.debug("ExperienceMemory extraction failed", exc_info=True)
+
+    # 4. Memory Quality Feedback Loop: Driven strictly by ExperienceOutcome
+    try:
+        injected_ids_raw = [
+            getattr(mem, "memory_id", None) or getattr(mem, "id", None)
+            for mem in turn_injected_memories
+            if (getattr(mem, "memory_id", None) or getattr(mem, "id", None))
+        ]
+        injected_ids = list(dict.fromkeys(injected_ids_raw))
+        if injected_ids:
+            outcome = exp_record.outcome if exp_record else None
+            if outcome == ExperienceOutcome.SUCCESS_VERIFIED:
+                feedback_val: bool | None = True
+            elif outcome in (ExperienceOutcome.FAILED_TOOL, ExperienceOutcome.FAILED_VERIFICATION):
+                feedback_val = False
+            else:
+                feedback_val = None
+
+            if feedback_val is not None:
+                if orch and getattr(orch, "memory_pipeline", None):
+                    orch.memory_pipeline.feedback(task_success=feedback_val, injected_memory_ids=injected_ids)
+                elif memory_mgr:
+                    from minicode.memory import MemoryScope
+                    for scope in MemoryScope:
+                        if scope in memory_mgr.memories:
+                            changed = False
+                            for entry in memory_mgr.memories[scope].entries:
+                                if entry.id in injected_ids:
+                                    if feedback_val:
+                                        entry.usage_count += 2
+                                    else:
+                                        entry.usage_count = max(0, entry.usage_count - 1)
+                                    entry.last_accessed = time.time()
+                                    changed = True
+                            if changed:
+                                memory_mgr._save_scope(scope)
+    except Exception:
+        pass
+
+
 def run_agent_turn(
     *,
     model: ModelAdapter,
@@ -995,14 +1140,33 @@ def run_agent_turn(
     # local assignment side effects.
     context_compactor: ContextCompactor | None = None
     context_cybernetics: ContextCyberneticsOrchestrator | None = None
-    memory_mgr: MemoryManager | None = None
+    memory_mgr: MemoryManager | None = (
+        memory_manager
+        if memory_manager is not None
+        else (MemoryManager(project_root=cwd) if cwd else None)
+    )
     micro_compactor: MicroCompactor | None = MicroCompactor()
     compaction_breaker: CompactionCircuitBreaker | None = CompactionCircuitBreaker()
     cost_control: CostControlLoop | None = None
+    active_execution_trace = ExecutionTrace()
+    turn_injected_memories: list[InjectedMemory] = []
+
+    # Record task start on active_execution_trace unconditionally
+    initial_task_desc = ""
+    if current_messages:
+        for msg in reversed(current_messages):
+            if msg.get("role") == "user":
+                initial_task_desc = str(msg.get("content", ""))
+                break
+    initial_task_id = f"turn-{int(time.time())}"
+    active_execution_trace.record_task_start(initial_task_id, initial_task_desc, workspace=cwd)
 
     if enable_work_chain:
         prelude.task, prelude.task_metadata = _build_work_chain_task(current_messages)
         if prelude.task:
+            active_execution_trace.task_id = str(prelude.task.id)
+            if hasattr(prelude.task, "raw_input") and prelude.task.raw_input:
+                active_execution_trace.task_description = prelude.task.raw_input
             prelude.task_graph = TaskGraph(name=f"turn-{prelude.task.id}")
             graph_task = prelude.task_graph.add_task(
                 name=prelude.task.title or prelude.task.id,
@@ -1173,6 +1337,8 @@ def run_agent_turn(
                 try:
                     task_desc = prelude.task.raw_input if hasattr(prelude.task, 'raw_input') else ""
                     current_messages = orch.inject_memories(task_desc, current_messages)
+                    if orch.memory_pipeline and orch.memory_pipeline._injector and getattr(orch.memory_pipeline._injector, '_cached_result', None):
+                        turn_injected_memories.extend(orch.memory_pipeline._injector._cached_result)
                 except Exception:
                     pass
             elif memory_injector and prelude.task:
@@ -1180,6 +1346,7 @@ def run_agent_turn(
                     task_desc = prelude.task.raw_input if hasattr(prelude.task, 'raw_input') else ""
                     injected = memory_injector.inject_for_task(task_desc)
                     if injected:
+                        turn_injected_memories.extend(injected)
                         logger.info(
                             "MemoryInjector: injected %d memories (mode=%s)",
                             len(injected),
@@ -1842,6 +2009,7 @@ def run_agent_turn(
                     if on_assistant_message:
                         on_assistant_message(next_step.content)
                     current_messages.append({"role": role, "content": next_step.content})
+                    active_execution_trace.record_assistant(next_step.content)
 
             if not next_step.calls and next_step.content and next_step.contentKind != "progress":
                 turn_state.set_stop_reason("done")
@@ -1948,6 +2116,27 @@ def run_agent_turn(
             _results.sort(key=lambda pair: call_order.get(pair[0]["id"], 999))
             
             for call, result in _results:
+                active_execution_trace.record_tool_call(
+                    call_id=str(call.get("id", "")),
+                    tool_name=call["toolName"],
+                    args=call.get("input", {}),
+                )
+                active_execution_trace.record_tool_result(
+                    call_id=str(call.get("id", "")),
+                    tool_name=call["toolName"],
+                    ok=result.ok,
+                    output=result.output,
+                    error="" if result.ok else result.output,
+                )
+                cmd_str = str(call.get("input", {}).get("CommandLine", "") or call.get("input", {}).get("command", ""))
+                if is_explicit_verification_command(cmd_str):
+                    active_execution_trace.record_verification(
+                        command=cmd_str,
+                        exit_code=0 if result.ok else 1,
+                        passed=result.ok,
+                        output=result.output,
+                    )
+
                 # Fire hooks and UI callbacks for concurrent calls (deferred)
                 tool_def = tools.find(call["toolName"])
                 is_concurrent = tool_def and tool_def.is_concurrency_safe and len(calls) > 1
@@ -1994,8 +2183,21 @@ def run_agent_turn(
                     # Use ErrorClassifier for intelligent error handling
                     classified = ErrorClassifier.classify(result.output, tool_name=call["toolName"])
                     nudge = NudgeGenerator.generate(classified, retry_count=turn_state.tool_error_count)
+                    # Failure injection: retrieve solutions from past failures
+                    failure_inj_prompt = ""
+                    if memory_injector and hasattr(memory_injector, "inject_on_failure"):
+                        try:
+                            inj_failures = memory_injector.inject_on_failure(
+                                error_message=result.output,
+                                tool_name=call["toolName"],
+                            )
+                            if inj_failures:
+                                turn_injected_memories.extend(inj_failures)
+                                failure_inj_prompt = "\n\n" + memory_injector.format_for_prompt(inj_failures)
+                        except Exception:
+                            pass
                     # Append nudge to tool result content for model context
-                    result_output = result.output + "\n\n[System note: " + nudge + "]"
+                    result_output = result.output + "\n\n[System note: " + nudge + "]" + failure_inj_prompt
                 else:
                     result_output = result.output
                     # Increased nudge frequency: provide steering even on success
@@ -2235,92 +2437,6 @@ def run_agent_turn(
                 turn_state.tool_error_count,
             )
 
-            # 任务后自省：提取经验教训
-            if orch and prelude.task:
-                try:
-                    execution_trace: list[dict[str, Any]] = [
-                        {"type": "tool_call", "count": turn_state.step},
-                        {
-                            "type": "error",
-                            "count": turn_state.tool_error_count,
-                            "content": f"{turn_state.tool_error_count} errors",
-                        }
-                        if turn_state.tool_error_count > 0
-                        else {},
-                        {"type": "assistant", "steps": turn_state.step},
-                    ]
-                    orch.reflect_on_task(
-                        task_description=(
-                            prelude.task.raw_input
-                            if hasattr(prelude.task, "raw_input")
-                            else str(prelude.task.id)
-                        ),
-                        step=turn_state.step,
-                        tool_error_count=turn_state.tool_error_count,
-                        execution_trace=execution_trace,
-                    )
-                except Exception:
-                    pass
-            elif reflection_engine and prelude.task:
-                try:
-                    _trace: list[dict[str, Any]] = [
-                        {"type": "tool_call", "count": turn_state.step},
-                        {
-                            "type": "error",
-                            "count": turn_state.tool_error_count,
-                            "content": f"{turn_state.tool_error_count} errors",
-                        }
-                        if turn_state.tool_error_count > 0
-                        else {},
-                        {"type": "assistant", "steps": turn_state.step},
-                    ]
-                    reflection = reflection_engine.reflect(
-                        task_description=(
-                            prelude.task.raw_input
-                            if hasattr(prelude.task, "raw_input")
-                            else str(prelude.task.id)
-                        ),
-                        execution_trace=execution_trace,
-                    )
-                    logger.info(
-                        "AgentReflection: success=%s confidence=%.2f lessons=%d improvements=%d",
-                        reflection.success, reflection.confidence,
-                        len(reflection.lessons_learned), len(reflection.suggested_improvements),
-                    )
-                except Exception:
-                    pass
-
-            # 记忆质量反馈：任务成功→注入的记忆 usage_count+1
-            if memory_injector and hasattr(memory_injector, '_cached_result'):
-                try:
-                    from minicode.memory import MemoryScope
-                    for mem in memory_injector._cached_result:
-                        if not hasattr(mem, 'id'):
-                            continue
-                        try:
-                            _mgr = memory_mgr
-                        except NameError:
-                            continue
-                        for scope_name in ['project', 'local', 'user']:
-                            try:
-                                scope = MemoryScope(scope_name)
-                                if scope in _mgr.memories:
-                                    mem_store = _mgr.memories[scope]
-                                    if hasattr(mem_store, "_id_index"):
-                                        entry = mem_store._id_index.get(mem.id)
-                                        if entry:
-                                            entry.usage_count += (
-                                                2 if turn_state.tool_error_count == 0 else -1
-                                            )
-                                            entry.last_accessed = time.time()
-                                            break
-                                        entry.last_accessed = time.time()
-                                        break
-                            except (ValueError, KeyError):
-                                continue
-                except Exception:
-                    pass
-
             # 路由反馈学习：记录任务结果以优化未来路由
             if smart_router and prelude.task:
                 try:
@@ -2342,6 +2458,23 @@ def run_agent_turn(
                     smart_router.learner().record_outcome(outcome)
                 except Exception:
                     pass
+
+        # 任务后结构化经验提取、持久化与反馈闭环 (Phase 2 Experience Memory - independent of enable_work_chain)
+        turn_task_desc = (
+            (prelude.task.raw_input if prelude.task and hasattr(prelude.task, "raw_input") else str(prelude.task.id))
+            if (enable_work_chain and prelude.task)
+            else (active_execution_trace.task_description or initial_task_desc)
+        )
+        _finalize_experience_memory(
+            active_execution_trace=active_execution_trace,
+            turn_state=turn_state,
+            coda_summary=coda_summary,
+            task_desc=turn_task_desc,
+            orch=orch if enable_work_chain else None,
+            reflection_engine=reflection_engine,
+            memory_mgr=memory_mgr,
+            turn_injected_memories=turn_injected_memories,
+        )
 
         # 控制论反馈：记录模式有效性
         if enable_work_chain and feedback_controller and prelude.task:

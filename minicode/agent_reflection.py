@@ -133,9 +133,10 @@ class ReflectionEngine:
         Returns:
             Reflection result
         """
-        tool_calls = [s for s in execution_trace if s.get("type") == "tool_call"]
-        errors = [s for s in execution_trace if s.get("type") == "error"]
-        assistant_msgs = [s for s in execution_trace if s.get("type") == "assistant"]
+        adapted_trace = self._normalize_trace(execution_trace)
+        tool_calls = [s for s in adapted_trace if s.get("type") == "tool_call"]
+        errors = [s for s in adapted_trace if s.get("type") == "error"]
+        assistant_msgs = [s for s in adapted_trace if s.get("type") == "assistant"]
 
         success = len(errors) == 0 and len(assistant_msgs) > 0
 
@@ -163,6 +164,74 @@ class ReflectionEngine:
             self._persist_reflection(reflection)
 
         return reflection
+
+    def _normalize_trace(self, execution_trace: Any) -> list[dict[str, Any]]:
+        """Normalize execution trace into legacy ReflectionEngine compatible event format.
+
+        Supports ExecutionTrace instances, lists of modern TraceEvent dicts,
+        and lists of legacy event dicts.
+        """
+        if execution_trace is None:
+            return []
+        if hasattr(execution_trace, "to_reflection_trace"):
+            return execution_trace.to_reflection_trace()
+        if not isinstance(execution_trace, list):
+            return []
+
+        normalized: list[dict[str, Any]] = []
+        for item in execution_trace:
+            if not isinstance(item, dict):
+                continue
+            # Already legacy format
+            if "type" in item:
+                normalized.append(item)
+                continue
+            # Modern TraceEvent dict
+            event_type = item.get("event_type")
+            details = item.get("details", {})
+            if not isinstance(details, dict):
+                details = {}
+
+            if event_type == "tool_call":
+                tool_name = str(details.get("tool_name", ""))
+                args = details.get("args", {})
+                normalized.append({
+                    "type": "tool_call",
+                    "name": tool_name,
+                    "toolName": tool_name,
+                    "input": args if isinstance(args, dict) else {},
+                    "call_id": details.get("call_id", ""),
+                })
+            elif event_type == "tool_result":
+                ok = details.get("ok", True)
+                err = details.get("error") or ""
+                out = details.get("output") or ""
+                if not ok or err:
+                    normalized.append({
+                        "type": "error",
+                        "content": err or out,
+                        "tool_name": details.get("tool_name", ""),
+                        "call_id": details.get("call_id", ""),
+                    })
+            elif event_type == "assistant":
+                content = details.get("content", "")
+                if content:
+                    normalized.append({
+                        "type": "assistant",
+                        "content": content,
+                    })
+            elif event_type == "verification":
+                passed = details.get("passed", True)
+                if not passed:
+                    out = details.get("output", "")
+                    cmd = details.get("command", "")
+                    normalized.append({
+                        "type": "error",
+                        "content": out or f"Verification failed: {cmd}",
+                        "tool_name": "verification",
+                        "command": cmd,
+                    })
+        return normalized
 
     def _extract_task_context(
         self, tool_calls: list[dict[str, Any]], assistant_msgs: list[dict[str, Any]]
