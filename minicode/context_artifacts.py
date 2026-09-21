@@ -154,7 +154,7 @@ class ContextArtifactStore:
             dir=str(self._store_dir), prefix=".artifact_content_", suffix=".tmp"
         )
         try:
-            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8", newline="") as f:
                 f.write(content)
             os.replace(tmp_content, str(content_path))
         except Exception:
@@ -205,7 +205,7 @@ class ContextArtifactStore:
             content_path, _ = self._get_paths(clean_id)
             if not content_path.is_file():
                 return None
-            with open(content_path, "r", encoding="utf-8") as f:
+            with open(content_path, "r", encoding="utf-8", newline="") as f:
                 return f.read()
         except Exception as exc:
             logger.warning("Failed to read artifact %s: %s", artifact_id, exc)
@@ -232,7 +232,7 @@ class ContextArtifactStore:
             # Strict upper bound on recovery slice
             bounded_limit = max(1, min(int(limit), max_allowed))
 
-            with open(content_path, "r", encoding="utf-8") as f:
+            with open(content_path, "r", encoding="utf-8", newline="") as f:
                 f.seek(offset)
                 content = f.read(bounded_limit)
 

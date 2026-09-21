@@ -293,6 +293,29 @@ class ContextBudgetManager:
                 reasons=["stable_task_state"],
             )
 
+        content_lower = content.lower()
+        has_constraint = (
+            "constraint:" in content_lower
+            or "constraints:" in content_lower
+            or "critical constraint" in content_lower
+            or "security constraint" in content_lower
+            or "security rule" in content_lower
+        )
+        if has_constraint:
+            return ContextItem(
+                item_id=item_id,
+                message_index=index,
+                zone=ContextZone.CRITICAL,
+                role=role,
+                source="constraint",
+                estimated_tokens=estimated_tokens,
+                compressible=False,
+                externalizable=False,
+                recoverable=False,
+                protected=True,
+                reasons=["task_constraint"],
+            )
+
         # 3. Memory: Injected Experience Memory
         if (
             "[Verified Experience]" in content
@@ -585,14 +608,14 @@ class ContextBudgetManager:
                 continue
 
             # 3. Compressible conversation / tool evidence -> COMPRESS
-            if item.compressible and item.zone in (
+            if item.compressible and item.estimated_tokens >= 25 and item.zone in (
                 ContextZone.CONVERSATION,
                 ContextZone.TOOL_EVIDENCE,
                 ContextZone.MEMORY,
                 ContextZone.VERIFICATION,
                 ContextZone.ERROR_EVIDENCE,
             ):
-                compressed_tokens = min(item.estimated_tokens, max(40, item.estimated_tokens // 3))
+                compressed_tokens = min(item.estimated_tokens, 15)
                 freed = max(0, item.estimated_tokens - compressed_tokens)
                 current_estimate -= freed
                 decisions_by_idx[idx] = ContextDecision(
@@ -703,13 +726,12 @@ class ContextBudgetManager:
 
             elif action == ContextAction.COMPRESS:
                 content = str(msg.get("content", "") or "")
-                # Create concise summary stub
-                first_line = content.strip().split("\n")[0][:120] if content.strip() else ""
-                compressed_content = (
-                    f"[Compressed context: {first_line}... "
-                    f"({len(content)} chars compressed to retain key semantics)]"
-                )
-                active_metrics.compressed_tokens += (decision.original_tokens - decision.target_tokens)
+                first_line = content.strip().split("\n")[0][:30] if content.strip() else ""
+                if len(content) <= 50:
+                    compressed_content = content
+                else:
+                    compressed_content = f"[Summary: {first_line}...]"
+                active_metrics.compressed_tokens += max(0, decision.original_tokens - estimate_tokens(compressed_content))
                 new_msg = dict(msg)
                 new_msg["content"] = compressed_content
                 new_msg["_context_action"] = "compress"
