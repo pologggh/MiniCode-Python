@@ -213,3 +213,149 @@ def test_agent_loop_model_calls_load_context_artifact_to_recover(tmp_path: Path,
 
     assert model.call_count == 3
     assert any("Successfully recovered slice." in str(m.get("content", "")) for m in final_messages)
+
+
+def test_agent_loop_default_budget_pressure_integration(tmp_path: Path, permissions, tools, monkeypatch):
+    """Verify run_agent_turn without available_budget handles budget pressure across multiple model.next() calls without crashing."""
+    from minicode.context_manager import ModelContextWindow
+
+    # Monkeypatch model context window to simulate a small budget window (e.g. 500 tokens effective input)
+    monkeypatch.setattr(
+        "minicode.context_budget.get_model_context_window",
+        lambda model_id: ModelContextWindow(
+            context_window=600,
+            output_reserve=100,
+        ),
+    )
+
+    (tmp_path / "data.txt").write_text("sample content\n" * 20, encoding="utf-8")
+
+    class MultiStepBudgetModel:
+        def __init__(self):
+            self.call_count = 0
+            self.received_batches: list[list[dict]] = []
+
+        def next(self, messages, **_kwargs) -> AgentStep:
+            self.call_count += 1
+            self.received_batches.append([dict(m) for m in messages])
+            if self.call_count == 1:
+                # First step: call read_file
+                return AgentStep(
+                    type="tool_calls",
+                    calls=[{
+                        "id": "c1",
+                        "toolName": "read_file",
+                        "input": {"path": str(tmp_path / "data.txt")},
+                    }],
+                )
+            else:
+                # Second step: finish turn
+                return AgentStep(type="assistant", content="Analysis complete under tight budget.")
+
+    # Create past conversation that exceeds the 450-token window (~1500 chars -> ~375 tokens, plus system prompt and user task)
+    initial_messages = [
+        {"role": "user", "content": "Prior long discussion message 1: " + ("history " * 80)},
+        {"role": "assistant", "content": "Prior long assistant response 1: " + ("explanation " * 80)},
+        {"role": "user", "content": "Prior long discussion message 2: " + ("more_history " * 80)},
+        {"role": "assistant", "content": "Prior long assistant response 2: " + ("more_explanation " * 80)},
+        {"role": "user", "content": "Now inspect data.txt and summarize."},
+    ]
+
+    model = MultiStepBudgetModel()
+    runtime: dict = {}
+
+    # Call run_agent_turn with NO available_budget passed (default calling convention)
+    final_messages = run_agent_turn(
+        messages=initial_messages,
+        system_prompt="You are a system assistant adhering to budget constraints.",
+        model=model,
+        tools=tools,
+        cwd=str(tmp_path),
+        permissions=permissions,
+        runtime=runtime,
+        max_steps=5,
+    )
+
+    # Must execute at least 2 model.next() calls without crashing
+    assert model.call_count >= 2
+
+    # Model received compressed context
+    batch_1 = model.received_batches[0]
+    has_compressed_or_evicted = any(
+        m.get("_context_action") in ("compress", "evict", "offload") or "[Summary:" in str(m.get("content", ""))
+        for m in batch_1
+    )
+    assert has_compressed_or_evicted is True
+
+    # Budget metrics were tracked and no crash occurred
+    metrics = runtime.get("contextBudgetMetrics")
+    assert metrics is not None
+    assert metrics.plans_created >= 2
+    assert any("Analysis complete under tight budget." in str(m.get("content", "")) for m in final_messages)
+
+
+def test_agent_loop_runtime_metrics_wiring_default_registry(tmp_path: Path, permissions, tools):
+    """Verify default ToolRegistry path wires ContextBudgetMetrics through runtime context into load_context_artifact."""
+    full_text = "ERROR_TRACE: Diagnostic memory dump frame #8899\n" * 250
+    (tmp_path / "dump.log").write_text(full_text, encoding="utf-8")
+
+    class MetricsCheckingModel:
+        def __init__(self):
+            self.call_count = 0
+            self.extracted_artifact_id = ""
+
+        def next(self, messages, **_kwargs) -> AgentStep:
+            self.call_count += 1
+            if self.call_count == 1:
+                # Step 1: read dump.log
+                return AgentStep(
+                    type="tool_calls",
+                    calls=[{
+                        "id": "c1",
+                        "toolName": "read_file",
+                        "input": {"path": str(tmp_path / "dump.log")},
+                    }],
+                )
+            elif self.call_count == 2:
+                # Step 2: find offloaded artifact id from tool_result and invoke load_context_artifact
+                for m in messages:
+                    if m.get("_context_artifact_id"):
+                        self.extracted_artifact_id = m["_context_artifact_id"]
+                        break
+                assert self.extracted_artifact_id.startswith("ctx_")
+                return AgentStep(
+                    type="tool_calls",
+                    calls=[{
+                        "id": "c2",
+                        "toolName": "load_context_artifact",
+                        "input": {
+                            "artifact_id": self.extracted_artifact_id,
+                            "offset": 0,
+                            "limit": 400,
+                        },
+                    }],
+                )
+            else:
+                return AgentStep(type="assistant", content="Recovery finished.")
+
+    model = MetricsCheckingModel()
+    runtime: dict = {}
+
+    final_messages = run_agent_turn(
+        messages=[{"role": "user", "content": "Inspect dump.log"}],
+        system_prompt="You are assistant.",
+        model=model,
+        tools=tools,  # Standard default registry created by create_default_tool_registry(tmp_path)
+        cwd=str(tmp_path),
+        permissions=permissions,
+        runtime=runtime,
+        max_steps=5,
+    )
+
+    assert model.call_count == 3
+    # Verify same turn ContextBudgetMetrics.artifact_recovery_count == 1
+    metrics = runtime.get("contextBudgetMetrics")
+    assert metrics is not None
+    assert metrics.artifact_recovery_count == 1
+    assert metrics.recovery_failures == 0
+

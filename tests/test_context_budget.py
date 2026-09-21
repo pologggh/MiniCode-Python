@@ -434,3 +434,157 @@ def test_protected_context_over_budget_violation():
     assert plan.budget_violation_reason == "protected_context_exceeds_budget"
     # Crucially, protected constraint must NOT be deleted
     assert any("Must strictly preserve legacy endpoints" in str(m.get("content", "")) for m in phase3_msgs)
+
+
+def test_plan_available_budget_none_runtime_pressure():
+    """Verify plan() with available_budget=None computes model budget and does not throw TypeError on eviction path."""
+    mgr = ContextBudgetManager()
+
+    # Construct fixture exceeding GPT-4o input budget (~123k tokens -> ~500k chars)
+    # Using 150 conversation messages of 3,500 chars each (~130,000 tokens)
+    messages = [
+        {"role": "system", "content": "You are a helpful coding assistant."},
+        {"role": "user", "content": "Solve large migration task."},
+    ]
+    for i in range(150):
+        messages.append({
+            "role": "assistant",
+            "content": f"Detailed architectural migration step {i} notes and analysis: " + ("x" * 3500),
+        })
+        messages.append({
+            "role": "user",
+            "content": f"Feedback on step {i}: continue with the next module.",
+        })
+
+    # Call plan with available_budget=None
+    plan = mgr.plan(messages=messages, model="gpt-4o", available_budget=None)
+
+    assert plan.budget_tokens > 100_000
+    assert plan.tokens_before > plan.budget_tokens
+    # Must enter evict_over_budget path without TypeError
+    assert plan.evict_count > 0
+    assert any("evict_over_budget" in d.reason for d in plan.decisions)
+
+
+def test_error_resolution_semantics_case_a():
+    """CASE A: pytest fail -> edit -> pytest pass.
+    Pass must be protected VERIFICATION, earlier fail must have protected=False.
+    """
+    mgr = ContextBudgetManager()
+    messages = [
+        {"role": "system", "content": "You are assistant."},
+        {"role": "user", "content": "Run tests and fix failures."},
+        # Index 2: pytest fail
+        {
+            "role": "tool_result",
+            "toolName": "pytest",
+            "content": "=== test session starts ===\nFAILED tests/test_core.py::test_foo - AssertionError: expected 1 got 0\n1 failed in 0.12s",
+        },
+        {"role": "assistant", "content": "Fixing the assertion."},
+        # Index 4: edit success
+        {
+            "role": "tool_result",
+            "toolName": "edit",
+            "content": "File core.py modified successfully.",
+        },
+        {"role": "assistant", "content": "Re-running tests."},
+        # Index 6: pytest pass
+        {
+            "role": "tool_result",
+            "toolName": "pytest",
+            "content": "=== test session starts ===\n1 passed in 0.05s",
+        },
+    ]
+
+    items = mgr.classify_all(messages)
+
+    fail_item = items[2]
+    pass_item = items[6]
+
+    # Earlier fail must NOT be protected
+    assert fail_item.protected is False
+    assert fail_item.zone == ContextZone.VERIFICATION
+
+    # Latest pass MUST be protected
+    assert pass_item.protected is True
+    assert pass_item.zone == ContextZone.VERIFICATION
+    assert "latest_verification" in pass_item.reasons
+
+
+def test_error_resolution_semantics_case_b():
+    """CASE B: pytest pass -> edit -> pytest fail.
+    Latest fail must be protected VERIFICATION evidence, earlier pass must have protected=False.
+    """
+    mgr = ContextBudgetManager()
+    messages = [
+        {"role": "system", "content": "You are assistant."},
+        {"role": "user", "content": "Refactor codebase."},
+        # Index 2: pytest pass
+        {
+            "role": "tool_result",
+            "toolName": "pytest",
+            "content": "=== test session starts ===\n5 passed in 0.20s",
+        },
+        {"role": "assistant", "content": "Introducing breaking changes."},
+        # Index 4: edit success
+        {
+            "role": "tool_result",
+            "toolName": "edit",
+            "content": "File engine.py updated.",
+        },
+        {"role": "assistant", "content": "Checking regression tests."},
+        # Index 6: pytest fail
+        {
+            "role": "tool_result",
+            "toolName": "pytest",
+            "content": "=== test session starts ===\nFAILED tests/test_engine.py::test_pipe - AssertionError\n1 failed in 0.15s",
+        },
+    ]
+
+    items = mgr.classify_all(messages)
+
+    pass_item = items[2]
+    fail_item = items[6]
+
+    # Earlier pass is not latest verification
+    assert pass_item.protected is False
+
+    # Latest fail is protected
+    assert fail_item.protected is True
+    assert fail_item.zone == ContextZone.VERIFICATION
+    assert "latest_verification" in fail_item.reasons
+    assert "unresolved_verification_failure" in fail_item.reasons
+
+
+def test_error_resolution_semantics_case_c():
+    """CASE C: generic tool error and no subsequent successful recovery evidence.
+    Must remain protected ERROR_EVIDENCE.
+    """
+    mgr = ContextBudgetManager()
+    messages = [
+        {"role": "system", "content": "You are assistant."},
+        {"role": "user", "content": "Build the frontend assets."},
+        # Index 2: tool call
+        {
+            "role": "assistant_tool_call",
+            "toolName": "run_command",
+            "toolUseId": "call_cmd_1",
+            "input": {"command": "npm run build"},
+        },
+        # Index 3: generic tool error
+        {
+            "role": "tool_result",
+            "toolName": "run_command",
+            "toolUseId": "call_cmd_1",
+            "content": "Error: command failed with exit code 1. Missing dependency 'webpack'",
+            "isError": True,
+        },
+    ]
+
+    items = mgr.classify_all(messages)
+
+    err_item = items[3]
+    assert err_item.zone == ContextZone.ERROR_EVIDENCE
+    assert err_item.protected is True
+    assert "latest_error_evidence" in err_item.reasons
+

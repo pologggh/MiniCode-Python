@@ -204,3 +204,86 @@ def test_load_context_artifact_metrics_wiring(tmp_path: Path):
     assert res2.ok is False
     assert metrics.artifact_recovery_count == 1
     assert metrics.recovery_failures == 1
+
+
+def test_artifact_store_root_symlink_escape_rejected(tmp_path: Path):
+    """Verify that if .mini-code-tool-results is a symlink pointing outside workspace, it is rejected."""
+    ws = tmp_path / "workspace"
+    outside = tmp_path / "sibling_outside_dir"
+    ws.mkdir()
+    outside.mkdir()
+
+    symlink_store = ws / ".mini-code-tool-results"
+    try:
+        symlink_store.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"Directory symlinks not supported in this test environment: {exc}")
+
+    # Initialization must reject the escaped store root
+    with pytest.raises(ValueError, match="points outside workspace"):
+        ContextArtifactStore(workspace=ws)
+
+    # If store was created before symlink was placed:
+    ws2 = tmp_path / "workspace2"
+    ws2.mkdir()
+    store2 = ContextArtifactStore(workspace=ws2)
+
+    symlink_store2 = ws2 / ".mini-code-tool-results"
+    try:
+        symlink_store2.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"Directory symlinks not supported in this test environment: {exc}")
+
+    # persist, read, read_range must all reject
+    with pytest.raises(ValueError, match="points outside workspace"):
+        store2.persist("Attempt write outside workspace")
+
+    with pytest.raises(ValueError, match="points outside workspace"):
+        store2.read("ctx_0123456789abcdef")
+
+    with pytest.raises(ValueError, match="points outside workspace"):
+        store2.read_range("ctx_0123456789abcdef")
+
+
+def test_active_artifact_cleanup_protection(tmp_path: Path):
+    """Verify cleanup(retention_days=0) protects active artifacts while deleting unreferenced ones."""
+    import os
+    import time
+
+    store = ContextArtifactStore(workspace=tmp_path)
+    meta1 = store.persist("Active artifact content that must be preserved", tool_name="grep")
+    meta2 = store.persist("Unreferenced old artifact content that should be pruned", tool_name="read_file")
+
+    # Set both mtimes back in the past
+    old_time = time.time() - 100_000
+    for aid in (meta1.artifact_id, meta2.artifact_id):
+        c_p, m_p = store._get_paths(aid)
+        os.utime(c_p, (old_time, old_time))
+        os.utime(m_p, (old_time, old_time))
+
+    current_messages = [
+        {"role": "system", "content": "You are assistant."},
+        {
+            "role": "tool_result",
+            "content": f"[Context Artifact]\nid: {meta1.artifact_id}\npreview...",
+            "_context_artifact_id": meta1.artifact_id,
+        },
+    ]
+
+    active_ids = {
+        str(m.get("_context_artifact_id"))
+        for m in current_messages
+        if m.get("_context_artifact_id")
+    }
+    assert meta1.artifact_id in active_ids
+
+    deleted = store.cleanup(retention_days=0, active_artifact_ids=active_ids)
+    assert deleted == 1
+
+    # Active artifact must remain intact and readable
+    assert store.exists(meta1.artifact_id) is True
+    assert store.read(meta1.artifact_id) == "Active artifact content that must be preserved"
+
+    # Unreferenced artifact must be deleted
+    assert store.exists(meta2.artifact_id) is False
+

@@ -1,6 +1,6 @@
 # Context Budget Manager Evaluation Results
 
-**Timestamp**: 2026-09-21 09:31:54
+**Timestamp**: 2026-09-21 09:42:54
 **Scope**: Phase 3.1 Context Budget Correctness & Evaluation Hardening
 
 ## Summary Metrics (Phase 3 vs Baseline)
