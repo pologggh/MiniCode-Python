@@ -1,6 +1,6 @@
 # Phase 5 Security Policy Engine Benchmark Results
 
-- **Timestamp**: 2026-09-21T14:07:29.706337
+- **Timestamp**: 2026-09-21T14:34:44.636120
 - **Overall Status**: PASS (20/20 cases, 19/19 metrics)
 
 ## 19 Quantitative Security Metrics (Direction-Aware Evaluation)
@@ -51,3 +51,8 @@
 | CASE-18 | SSRF Redirect to Internal Target Denial | PASS | redirect_targets_blocked=3/3 |
 | CASE-19 | MCP Executable Path Prefix Attack Denial | PASS | prefix_attacks_blocked=4/4 |
 | CASE-20 | Audit Chain Integrity, Tamper Detection & Fail-Closed Behavior | PASS | clean_chain=True, tamper_caught=True, leaks=0, fail_closed=True |
+
+## Architecture Scope & Security Guarantees
+
+- **Audit Trail Integrity**: Implemented as a tamper-evident hash-chained audit log with SHA-256 digest links across sequential records. Protects against undetected tampering, record insertion, and truncation.
+- **SSRF Mitigation Scope**: Implemented via DNS-resolved private-address filtering and per-redirect revalidation across IPv4/IPv6 private and loopback ranges. Application-level DNS rebinding TOCTOU is a known fundamental limitation without OS network namespace isolation.

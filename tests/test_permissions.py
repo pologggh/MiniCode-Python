@@ -182,3 +182,56 @@ def test_windows_style_directory_match_is_case_insensitive(monkeypatch: pytest.M
     monkeypatch.setattr(permissions_module, "_is_win", True)
 
     assert _is_within_directory("/Users/Alice/Repo", "/users/alice/repo/src/main.py")
+
+
+def test_ensure_tool_action_scoped_lifecycle(tmp_path: Path) -> None:
+    prompts: list[dict] = []
+    current_decision = "allow_once"
+
+    def prompt(request: dict):
+        prompts.append(request)
+        return {"decision": current_decision}
+
+    manager = PermissionManager(str(tmp_path), prompt=prompt)
+    manager.begin_turn()
+
+    # 1. allow_once does not cache for subsequent calls
+    current_decision = "allow_once"
+    manager.ensure_tool_action("batch_copy", scope="src/ -> dst1/")
+    assert len(prompts) == 1
+    # Next call with same scope must prompt again because allow_once was not cached
+    manager.ensure_tool_action("batch_copy", scope="src/ -> dst1/")
+    assert len(prompts) == 2
+
+    # 2. allow_turn caches for the remainder of the turn for matching scope
+    current_decision = "allow_turn"
+    manager.ensure_tool_action("batch_delete", scope="build/")
+    assert len(prompts) == 3
+    # Same tool, same scope in same turn -> does not prompt again
+    manager.ensure_tool_action("batch_delete", scope="build/")
+    assert len(prompts) == 3
+
+    # 3. Different scope under allow_turn does NOT reuse cache
+    current_decision = "allow_once"
+    manager.ensure_tool_action("batch_delete", scope="dist/")
+    assert len(prompts) == 4
+
+    # 4. Turn boundary clears turn_allowed_tool_actions
+    manager.end_turn()
+    manager.begin_turn()
+    current_decision = "allow_once"
+    # Previously allowed-for-turn scope "build/" must prompt again in new turn!
+    manager.ensure_tool_action("batch_delete", scope="build/")
+    assert len(prompts) == 5
+
+    # 5. deny_once raises RuntimeError but does not poison other scopes
+    current_decision = "deny_once"
+    with pytest.raises(RuntimeError, match="Tool action denied"):
+        manager.ensure_tool_action("mcp__run", scope="dangerous_query")
+    assert len(prompts) == 6
+
+    # Subsequent call with different scope can still be allowed
+    current_decision = "allow_once"
+    manager.ensure_tool_action("mcp__run", scope="safe_query")
+    assert len(prompts) == 7
+

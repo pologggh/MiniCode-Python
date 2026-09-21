@@ -170,3 +170,133 @@ def test_child_researcher_write_denied(tmp_path):
     assert "Security policy denied" in res.output
     assert "child_role_write_denied" in res.metadata.get("rule_ids", [])
 
+
+def test_fail_closed_across_all_approval_routes_when_permissions_none(tmp_path):
+    """Verify that when context.permissions is None, ALL tools requiring ASK fail closed before tool.run."""
+    execution_counts = {"write_file": 0, "edit_file": 0, "run_command": 0, "batch_delete": 0, "mcp": 0}
+
+    def make_runner(key: str):
+        def _runner(inp, ctx):
+            execution_counts[key] += 1
+            return ToolResult(ok=True, output=f"{key} succeeded")
+        return _runner
+
+    tools = [
+        ToolDefinition("write_file", "Write file", {"type": "object"}, lambda x: x, make_runner("write_file")),
+        ToolDefinition("edit_file", "Edit file", {"type": "object"}, lambda x: x, make_runner("edit_file")),
+        ToolDefinition("run_command", "Run cmd", {"type": "object"}, lambda x: x, make_runner("run_command")),
+        ToolDefinition("batch_delete", "Batch del", {"type": "object"}, lambda x: x, make_runner("batch_delete")),
+        ToolDefinition("mcp__server__query", "MCP query", {"type": "object"}, lambda x: x, make_runner("mcp")),
+    ]
+
+    policy = SecurityPolicyEngine()
+    registry = ToolRegistry(tools, security_policy=policy)
+    context = ToolContext(cwd=str(tmp_path), permissions=None)
+
+    # 1. write_file in DEFAULT mode (NATIVE_EDIT route)
+    res_w = registry.execute("write_file", {"path": "test.txt", "content": "hello"}, context)
+    assert res_w.ok is False
+    assert "permission manager missing" in res_w.output
+    assert execution_counts["write_file"] == 0
+
+    # 2. edit_file in DEFAULT mode (NATIVE_EDIT route)
+    res_e = registry.execute("edit_file", {"path": "test.txt", "content": "hello"}, context)
+    assert res_e.ok is False
+    assert "permission manager missing" in res_e.output
+    assert execution_counts["edit_file"] == 0
+
+    # 3. run_command with non-readonly command in DEFAULT mode (NATIVE_COMMAND route)
+    res_c = registry.execute("run_command", {"command": "pytest", "args": ["tests/"]}, context)
+    assert res_c.ok is False
+    assert "permission manager missing" in res_c.output
+    assert execution_counts["run_command"] == 0
+
+    # 4. batch_delete (GENERIC_TOOL route)
+    res_d = registry.execute("batch_delete", {"path": "some_file.txt"}, context)
+    assert res_d.ok is False
+    assert "permission manager missing" in res_d.output
+    assert execution_counts["batch_delete"] == 0
+
+    # 5. MCP tool (GENERIC_TOOL route)
+    res_m = registry.execute("mcp__server__query", {"query": "SELECT 1"}, context)
+    assert res_m.ok is False
+    assert "permission manager missing" in res_m.output
+    assert execution_counts["mcp"] == 0
+
+
+def test_native_permission_denial_audited(tmp_path):
+    """Verify that when a tool's internal permission check raises denial, it is cleanly caught and audited."""
+    def run_denied(inp, ctx):
+        raise RuntimeError("Command denied by user permission: pytest tests/")
+
+    cmd_tool = ToolDefinition(
+        name="run_command",
+        description="Run command",
+        input_schema={"type": "object"},
+        validator=lambda x: x,
+        run=run_denied,
+    )
+
+    policy = SecurityPolicyEngine()
+    audit_file = tmp_path / "audit.jsonl"
+    audit = SecurityAuditLog(audit_file)
+    registry = ToolRegistry([cmd_tool], security_policy=policy, security_audit=audit)
+
+    perms = PermissionManager(
+        workspace_root=str(tmp_path),
+        prompt=lambda req: {"decision": "deny_once"},
+        auto_mode=PermissionMode.DEFAULT,
+    )
+    context = ToolContext(cwd=str(tmp_path), permissions=perms)
+
+    res = registry.execute("run_command", {"command": "pytest", "args": ["tests/"]}, context)
+    assert res.ok is False
+    assert "denied" in res.output.lower()
+
+    valid, count, _, _ = audit.verify_chain()
+    assert valid is True
+    assert count == 1
+    # Check authorization_outcome recorded in event
+    import json
+    with open(audit_file, "r", encoding="utf-8") as f:
+        event = json.loads(f.readline())
+    assert event["authorization_outcome"] == "DENIED"
+    assert event["result_ok"] is False
+
+
+def test_audit_failure_graceful_degradation(tmp_path, monkeypatch):
+    """Verify that if the audit logger raises an exception after tool execution, the tool result is preserved."""
+    def run_ok(inp, ctx):
+        return ToolResult(ok=True, output="Tool work completed successfully")
+
+    ok_tool = ToolDefinition(
+        name="write_file",
+        description="Write file",
+        input_schema={"type": "object"},
+        validator=lambda x: x,
+        run=run_ok,
+    )
+
+    policy = SecurityPolicyEngine()
+    audit_file = tmp_path / "audit.jsonl"
+    audit = SecurityAuditLog(audit_file)
+
+    # Force record_event to raise an exception
+    def failing_record_event(*args, **kwargs):
+        raise OSError("Disk full or permission denied writing audit log")
+
+    monkeypatch.setattr(audit, "record_event", failing_record_event)
+
+    perms = PermissionManager(
+        workspace_root=str(tmp_path),
+        prompt=lambda req: {"decision": "allow_once"},
+        auto_mode=PermissionMode.AUTO,
+    )
+    registry = ToolRegistry([ok_tool], security_policy=policy, security_audit=audit)
+    context = ToolContext(cwd=str(tmp_path), permissions=perms)
+
+    res = registry.execute("write_file", {"path": "hello.txt", "content": "world"}, context)
+    # The tool execution must still succeed despite audit failure!
+    assert res.ok is True
+    assert res.output == "Tool work completed successfully"
+

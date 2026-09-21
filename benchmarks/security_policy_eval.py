@@ -910,6 +910,16 @@ def run_all_evaluations() -> dict[str, Any]:
         status_badge = "PASS" if c.passed else "FAIL"
         md_lines.append(f"| {c.case_id} | {c.name} | {status_badge} | {c.details} |")
 
+    md_lines.extend(
+        [
+            "",
+            "## Architecture Scope & Security Guarantees",
+            "",
+            "- **Audit Trail Integrity**: Implemented as a tamper-evident hash-chained audit log with SHA-256 digest links across sequential records. Protects against undetected tampering, record insertion, and truncation.",
+            "- **SSRF Mitigation Scope**: Implemented via DNS-resolved private-address filtering and per-redirect revalidation across IPv4/IPv6 private and loopback ranges. Application-level DNS rebinding TOCTOU is a known fundamental limitation without OS network namespace isolation.",
+        ]
+    )
+
     md_path = bench_dir / "security_policy_eval_results.md"
     md_path.write_text("\n".join(md_lines), encoding="utf-8")
 

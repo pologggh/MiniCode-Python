@@ -112,3 +112,39 @@ def test_audit_log_redacts_secrets_in_summary(tmp_path):
     raw_file_content = log_file.read_text(encoding="utf-8")
     assert secret_key not in raw_file_content
     assert "[REDACTED]" in raw_file_content
+
+
+def test_concurrent_audit_log_from_multiple_instances(tmp_path):
+    """Verify that multiple SecurityAuditLog instances writing concurrently maintain a valid hash chain."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    log_file = tmp_path / "concurrent_audit.jsonl"
+    num_threads = 5
+    events_per_thread = 10
+    total_events = num_threads * events_per_thread
+
+    def worker(worker_id: int):
+        # Each worker creates its own SecurityAuditLog instance targeting the same log_path
+        local_audit = SecurityAuditLog(log_file)
+        for i in range(events_per_thread):
+            local_audit.record_event(
+                session_id=f"sess_{worker_id}",
+                tool_name=f"tool_{worker_id}_{i}",
+                decision="ALLOW",
+                input_data={"worker": worker_id, "iter": i},
+                output=f"result_{worker_id}_{i}",
+                authorization_outcome="NOT_REQUIRED",
+            )
+
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        futures = [executor.submit(worker, w) for w in range(num_threads)]
+        for f in futures:
+            f.result()
+
+    # Now verify the chain with a new instance
+    verifier = SecurityAuditLog(log_file)
+    valid, count, invalid_idx, reason = verifier.verify_chain()
+    assert valid is True, f"Hash chain broken: {reason} at index {invalid_idx}"
+    assert count == total_events
+    assert invalid_idx == -1
+    assert reason == "Chain valid"
