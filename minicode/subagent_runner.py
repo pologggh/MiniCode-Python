@@ -24,7 +24,6 @@ from minicode.logging_config import get_logger
 from minicode.model_registry import create_model_adapter
 from minicode.permissions import PermissionManager
 from minicode.tooling import ToolRegistry
-from minicode.tools import create_default_tool_registry
 from minicode.types import ChatMessage
 
 logger = get_logger("subagent_runner")
@@ -159,6 +158,7 @@ def run_subagent(config: SubAgentRunConfig) -> SubAgentResult:
 
     # 3. Tool Filtering & Stripping
     try:
+        from minicode.tools import create_default_tool_registry
         full_tools = create_default_tool_registry(cwd, runtime=child_runtime)
     except Exception as e:
         logger.error("Failed to create tool registry for sub-agent: %s", e)

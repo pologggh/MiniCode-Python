@@ -39,7 +39,7 @@ def test_subagent_mcp_servers_stripped(tmp_path):
         depth=0,
     )
 
-    with patch("minicode.subagent_runner.create_default_tool_registry") as mock_create_tools, \
+    with patch("minicode.tools.create_default_tool_registry") as mock_create_tools, \
          patch("minicode.subagent_runner.create_model_adapter") as mock_model_adapter, \
          patch("minicode.subagent_runner.run_agent_turn") as mock_run_turn:
 
@@ -74,7 +74,7 @@ def test_subagent_strips_forbidden_tools(tmp_path):
         depth=0,
     )
 
-    with patch("minicode.subagent_runner.create_default_tool_registry") as mock_create_tools, \
+    with patch("minicode.tools.create_default_tool_registry") as mock_create_tools, \
          patch("minicode.subagent_runner.create_model_adapter") as mock_model_adapter, \
          patch("minicode.subagent_runner.run_agent_turn") as mock_run_turn:
 
@@ -109,7 +109,7 @@ def test_subagent_read_only_sandboxing(tmp_path):
         depth=0,
     )
 
-    with patch("minicode.subagent_runner.create_default_tool_registry") as mock_create_tools, \
+    with patch("minicode.tools.create_default_tool_registry") as mock_create_tools, \
          patch("minicode.subagent_runner.create_model_adapter"), \
          patch("minicode.subagent_runner.run_agent_turn") as mock_run_turn:
 
@@ -137,7 +137,7 @@ def test_subagent_crash_containment(tmp_path):
         depth=0,
     )
 
-    with patch("minicode.subagent_runner.create_default_tool_registry") as mock_create_tools, \
+    with patch("minicode.tools.create_default_tool_registry") as mock_create_tools, \
          patch("minicode.subagent_runner.create_model_adapter"), \
          patch("minicode.subagent_runner.run_agent_turn", side_effect=RuntimeError("Simulated LLM network collapse")):
 
@@ -164,7 +164,7 @@ def test_subagent_json_extraction(tmp_path):
 
     review_json = '```json\n{"verdict": "approve", "issues": []}\n```'
 
-    with patch("minicode.subagent_runner.create_default_tool_registry") as mock_create_tools, \
+    with patch("minicode.tools.create_default_tool_registry") as mock_create_tools, \
          patch("minicode.subagent_runner.create_model_adapter"), \
          patch("minicode.subagent_runner.run_agent_turn") as mock_run_turn:
 
@@ -192,7 +192,7 @@ def test_task_tool_backward_compatibility(tmp_path):
     context = ToolContext(cwd=str(tmp_path))
     context._runtime = {"model": "test-model"}
 
-    with patch("minicode.subagent_runner.create_default_tool_registry") as mock_create_tools, \
+    with patch("minicode.tools.create_default_tool_registry") as mock_create_tools, \
          patch("minicode.subagent_runner.create_model_adapter"), \
          patch("minicode.subagent_runner.run_agent_turn") as mock_run_turn:
 
