@@ -136,7 +136,7 @@ def is_workspace_root_path(path: str | Path, cwd: str | Path | None = None) -> b
     if not path:
         return True
     path_str = str(path).strip()
-    if path_str in {".", "./", "", "/"}:
+    if path_str in {".", "./", ".\\", "", "/", "\\"}:
         return True
     if cwd is None:
         return False

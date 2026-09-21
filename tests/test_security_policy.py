@@ -174,24 +174,25 @@ def test_security_policy_sensitive_file_read(tmp_path):
 
 def test_security_policy_taint_escalation():
     engine = SecurityPolicyEngine()
-    # Normal edit in AUTO mode is ALLOW
+    # In BYPASS mode, normal clean edit is ALLOW
     req_clean = SecurityRequest(
         tool_name="edit_file",
         input_data={"path": "main.py", "content": "print(1)"},
-        permission_mode=PermissionMode.AUTO,
+        permission_mode=PermissionMode.BYPASS,
         untrusted_context_seen=False,
     )
     assert engine.evaluate(req_clean).decision == SecurityDecision.ALLOW
 
-    # When untrusted context is seen, escalates to ASK!
+    # When untrusted context is seen, even in BYPASS mode escalates to ASK!
     req_tainted = SecurityRequest(
         tool_name="edit_file",
         input_data={"path": "main.py", "content": "print(1)"},
-        permission_mode=PermissionMode.AUTO,
+        permission_mode=PermissionMode.BYPASS,
         untrusted_context_seen=True,
     )
     assessment = engine.evaluate(req_tainted)
     assert assessment.decision == SecurityDecision.ASK
+    assert assessment.approval_route == ApprovalRoute.GENERIC_TOOL
     assert "taint_escalation_enforced" in assessment.rule_ids
 
 

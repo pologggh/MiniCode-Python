@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import time
 from dataclasses import dataclass, field
@@ -402,6 +404,7 @@ class ToolRegistry:
                     return fail_closed_res
 
                 if assessment.decision == SecurityDecision.ASK and assessment.approval_route == ApprovalRoute.GENERIC_TOOL:
+                    display_scope = ""
                     if tool_name == "run_command" and isinstance(parsed, dict) and "command" in parsed:
                         cmd_val = parsed["command"]
                         args_val = parsed.get("args") or []
@@ -411,16 +414,29 @@ class ToolRegistry:
                             action_scope = f"{cmd_val} {' '.join(str(a) for a in args_val)}".strip()
                         else:
                             action_scope = str(cmd_val).strip()
+                        display_scope = action_scope[:200]
                     else:
-                        action_scope = str(parsed)[:200]
+                        canonical_payload = json.dumps(
+                            parsed,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                            default=str,
+                        )
+                        action_scope = hashlib.sha256(f"{tool_name}\0{canonical_payload}".encode("utf-8")).hexdigest()
+                        display_scope = str(parsed)[:200]
 
                     try:
-                        context.permissions.ensure_tool_action(
-                            tool_name=tool_name,
-                            scope=action_scope,
-                            summary=f"Approval requested for tool '{tool_name}'",
-                            details=[f"tool: {tool_name}", f"reasons: {'; '.join(assessment.reasons)}"],
-                        )
+                        ensure_kwargs: dict[str, Any] = {
+                            "tool_name": tool_name,
+                            "scope": action_scope,
+                            "summary": f"Approval requested for tool '{tool_name}'",
+                            "details": [f"tool: {tool_name}", f"scope: {display_scope}", f"reasons: {'; '.join(assessment.reasons)}"],
+                        }
+                        import inspect
+                        sig = inspect.signature(context.permissions.ensure_tool_action)
+                        if "display_scope" in sig.parameters:
+                            ensure_kwargs["display_scope"] = display_scope
+                        context.permissions.ensure_tool_action(**ensure_kwargs)
                     except RuntimeError as perm_err:
                         perm_denied_res = ToolResult(
                             ok=False,
@@ -450,9 +466,25 @@ class ToolRegistry:
             # Phase 2: Execution (with crash protection and native permission denial interception)
             try:
                 result = tool.run(parsed, context)
-            except RuntimeError as perm_err:
+            except (RuntimeError, PermissionError) as perm_err:
                 err_str = str(perm_err)
-                if any(kw in err_str.lower() for kw in ("denied", "permission", "rejected", "blocked", "forbidden")):
+                is_perm_denial = any(
+                    kw in err_str.lower()
+                    for kw in (
+                        "denied",
+                        "permission",
+                        "rejected",
+                        "blocked",
+                        "forbidden",
+                        "requires approval",
+                        "start minicode in tty mode",
+                    )
+                ) or (
+                    assessment is not None
+                    and assessment.decision == SecurityDecision.ASK
+                    and assessment.approval_route in {ApprovalRoute.NATIVE_EDIT, ApprovalRoute.NATIVE_COMMAND}
+                )
+                if is_perm_denial:
                     perm_denied_res = ToolResult(
                         ok=False,
                         output=f"Tool execution denied: {err_str}",

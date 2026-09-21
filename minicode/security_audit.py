@@ -2,6 +2,17 @@
 
 Provides a structured, secret-redacted, SHA-256 hash-chained JSONL audit trail
 for all tool evaluations, permission gates, and security decisions.
+
+Guarantees and Boundaries:
+- Concurrency: Provides process-local multi-instance thread safety for multiple
+  SecurityAuditLog instances writing to the same resolved log path within the same
+  Python process.
+- Known Limitation: Multiple independent MiniCode OS processes writing to the same
+  audit JSONL are not serialized by the current threading lock (cross-process safety
+  would require OS file locking).
+- Tamper Evidence: Detects content modification and interior record deletion or
+  reordering. Does not independently detect tail truncation or whole-log deletion
+  without an external signed anchor or checkpoint.
 """
 from __future__ import annotations
 
@@ -23,7 +34,7 @@ _MODULE_LOCK = threading.Lock()
 
 
 def _get_path_lock(path: Path) -> threading.Lock:
-    """Return a shared process-level lock for the resolved path."""
+    """Return a shared process-local threading lock for the resolved path."""
     try:
         resolved = path.resolve()
     except Exception:
@@ -91,7 +102,7 @@ class SecurityAuditEvent:
 
 
 class SecurityAuditLog:
-    """Thread-safe, append-only, tamper-evident hash-chained audit log."""
+    """Process-local thread-safe, append-only, tamper-evident hash-chained audit log."""
 
     GENESIS_HASH = "0" * 64
 

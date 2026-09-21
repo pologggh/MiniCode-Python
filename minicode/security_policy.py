@@ -380,7 +380,7 @@ class SecurityPolicyEngine:
                         hard_deny=True,
                     )
 
-            # Prevent batch_copy of .git
+            # Prevent batch_copy of .git or workspace root
             if tool_name == "batch_copy":
                 src_path = str(request.input_data.get("source", "")).strip()
                 dest_path = str(request.input_data.get("destination", "")).strip()
@@ -394,6 +394,37 @@ class SecurityPolicyEngine:
                         reasons=["Copying .git directory or its metadata is prohibited"],
                         hard_deny=True,
                     )
+
+                if is_workspace_root_path(dest_path, cwd=request.cwd):
+                    self.metrics.deny_count += 1
+                    self.metrics.hard_denies += 1
+                    return SecurityAssessment(
+                        decision=SecurityDecision.DENY,
+                        risk=SecurityRisk.CRITICAL,
+                        rule_ids=["workspace_root_overwrite_denied"],
+                        reasons=["Copy destination resolves to workspace root; overwriting workspace root is prohibited"],
+                        hard_deny=True,
+                    )
+
+                if request.cwd and src_path and dest_path:
+                    try:
+                        src_p = Path(src_path) if Path(src_path).is_absolute() else (Path(request.cwd) / src_path)
+                        dest_p = Path(dest_path) if Path(dest_path).is_absolute() else (Path(request.cwd) / dest_path)
+                        src_res = src_p.resolve()
+                        dest_res = dest_p.resolve()
+                        is_src_dir = src_res.is_dir() or is_workspace_root_path(src_path, cwd=request.cwd)
+                        if is_src_dir and (dest_res == src_res or dest_res.is_relative_to(src_res)):
+                            self.metrics.deny_count += 1
+                            self.metrics.hard_denies += 1
+                            return SecurityAssessment(
+                                decision=SecurityDecision.DENY,
+                                risk=SecurityRisk.CRITICAL,
+                                rule_ids=["recursive_copy_denied"],
+                                reasons=["Copy destination is inside source directory; recursive self-copy is prohibited"],
+                                hard_deny=True,
+                            )
+                    except Exception:
+                        pass
 
         # ===================================================================
         # 4. Sensitive File Read & Write Boundary Policy (Enforced even in BYPASS)
@@ -415,7 +446,7 @@ class SecurityPolicyEngine:
                 rule_ids.append("sensitive_file_write_approval")
                 reasons.append(f"Modifying sensitive configuration or credentials requires approval: {', '.join(sensitive_paths)}")
                 self.metrics.ask_count += 1
-                route = ApprovalRoute.NATIVE_EDIT if tool_name in NATIVE_EDIT_TOOLS else ApprovalRoute.GENERIC_TOOL
+                route = ApprovalRoute.GENERIC_TOOL if (mode == PermissionMode.BYPASS or tool_name not in NATIVE_EDIT_TOOLS) else ApprovalRoute.NATIVE_EDIT
                 return SecurityAssessment(
                     decision=SecurityDecision.ASK,
                     risk=SecurityRisk.HIGH,
@@ -465,6 +496,26 @@ class SecurityPolicyEngine:
 
         # Mode: BYPASS (skips normal prompts, but preserves hard denies and sensitive boundaries)
         if mode == PermissionMode.BYPASS:
+            if request.untrusted_context_seen and category in {
+                ToolCategory.LOCAL_WRITE,
+                ToolCategory.DESTRUCTIVE_LOCAL,
+                ToolCategory.EXECUTION,
+                ToolCategory.GIT_WRITE,
+                ToolCategory.MCP,
+            }:
+                self.metrics.ask_count += 1
+                self.metrics.taint_escalations += 1
+                return SecurityAssessment(
+                    decision=SecurityDecision.ASK,
+                    risk=SecurityRisk.HIGH,
+                    rule_ids=["taint_escalation_enforced", "untrusted_external_content_taint"],
+                    reasons=["External untrusted content observed earlier in this turn; escalates to explicit approval even in BYPASS mode"],
+                    approval_route=ApprovalRoute.GENERIC_TOOL,
+                    sensitive_paths=sensitive_paths,
+                    is_external=is_external,
+                    output_trust=output_trust,
+                    hard_deny=False,
+                )
             self.metrics.allow_count += 1
             return SecurityAssessment(
                 decision=SecurityDecision.ALLOW,
@@ -505,21 +556,13 @@ class SecurityPolicyEngine:
         elif category == ToolCategory.LOCAL_WRITE:
             # write_file, edit_file, patch_file, batch_copy, batch_move
             if tool_name in NATIVE_EDIT_TOOLS:
-                if mode == PermissionMode.AUTO:
-                    if sensitive_paths:
-                        decision = SecurityDecision.ASK
-                        risk = SecurityRisk.HIGH
-                        route = ApprovalRoute.NATIVE_EDIT
-                        rule_ids.append("sensitive_file_write_approval")
-                        reasons.append(f"Modifying sensitive configuration or credentials requires approval: {', '.join(sensitive_paths)}")
-                    else:
-                        decision = SecurityDecision.ALLOW
-                        risk = SecurityRisk.LOW
-                        route = ApprovalRoute.NONE
+                risk = SecurityRisk.HIGH if sensitive_paths else SecurityRisk.MEDIUM
+                decision = SecurityDecision.ASK
+                route = ApprovalRoute.NATIVE_EDIT
+                if sensitive_paths:
+                    rule_ids.append("sensitive_file_write_approval")
+                    reasons.append(f"Modifying sensitive configuration or credentials requires approval: {', '.join(sensitive_paths)}")
                 else:
-                    risk = SecurityRisk.HIGH if sensitive_paths else SecurityRisk.MEDIUM
-                    decision = SecurityDecision.ASK
-                    route = ApprovalRoute.NATIVE_EDIT
                     rule_ids.append("local_edit_approval")
                     reasons.append(f"File modification requires approval: '{tool_name}'")
             elif tool_name == "batch_copy":
@@ -616,6 +659,7 @@ class SecurityPolicyEngine:
                 rule_ids.append("taint_escalation_enforced")
                 rule_ids.append("untrusted_external_content_taint")
                 reasons.append("External untrusted content observed earlier in this turn; escalates to explicit approval")
+                self.metrics.taint_escalations += 1
                 if category == ToolCategory.LOCAL_WRITE:
                     route = ApprovalRoute.NATIVE_EDIT
                 elif category == ToolCategory.EXECUTION:
