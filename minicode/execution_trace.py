@@ -12,62 +12,21 @@ import re
 import time
 from typing import Any
 
-from minicode.release_readiness import redact_sensitive_payload, redact_sensitive_text
+from minicode.redaction import redact_payload, redact_text
 
 # Upper bound on strings stored in traces to avoid memory bloat
 MAX_SUMMARY_LENGTH = 1500
 
-# Additional patterns for private keys, JWTs, and sensitive environment assignments
-_EXTRA_SECRET_PATTERNS = (
-    re.compile(
-        r"-----BEGIN [A-Z0-9_-]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9_-]+ PRIVATE KEY-----",
-        re.MULTILINE,
-    ),
-    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
-    re.compile(
-        r"(?P<key>(?:password|secret|token|api_?key|auth|bearer)[\s:=]+)(?P<value>[^\s\"',;]{8,})",
-        re.IGNORECASE,
-    ),
-)
-
 
 def sanitize_text(text: str, max_length: int = MAX_SUMMARY_LENGTH) -> str:
     """Sanitize secrets and truncate text to maximum allowed length."""
-    if not isinstance(text, str):
-        text = "" if text is None else str(text)
-
-    # First pass: standard release_readiness redaction
-    cleaned = redact_sensitive_text(text)
-
-    # Second pass: private keys, JWTs, credentials
-    for pattern in _EXTRA_SECRET_PATTERNS:
-        if "value" in pattern.groupindex:
-            cleaned = pattern.sub(r"\g<key>[REDACTED]", cleaned)
-        else:
-            cleaned = pattern.sub("[REDACTED]", cleaned)
-
-    # Bounded length truncation
-    if len(cleaned) > max_length:
-        cleaned = cleaned[: max_length - 17] + "... [truncated]"
-
-    return cleaned
+    return redact_text(text, max_length=max_length)
 
 
 def sanitize_payload(value: Any, max_length: int = MAX_SUMMARY_LENGTH) -> Any:
     """Recursively redact secrets and truncate string values in payloads."""
-    # First pass through release_readiness payload sanitizer
-    redacted = redact_sensitive_payload(value)
+    return redact_payload(value, max_length=max_length)
 
-    if isinstance(redacted, dict):
-        return {
-            str(k): sanitize_payload(v, max_length=max_length)
-            for k, v in redacted.items()
-        }
-    elif isinstance(redacted, (list, tuple)):
-        return [sanitize_payload(item, max_length=max_length) for item in redacted]
-    elif isinstance(redacted, str):
-        return sanitize_text(redacted, max_length=max_length)
-    return redacted
 
 
 class TraceEventType(str, Enum):
