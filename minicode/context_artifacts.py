@@ -93,10 +93,12 @@ class ContextArtifactStore:
         self._ensure_dir()
         content_path = (self._store_dir / f"{clean_id}.txt").resolve()
         meta_path = (self._store_dir / f"{clean_id}.meta.json").resolve()
+        # Strict Path containment validation (prevents sibling-prefix escapes and symlink escapes)
+        resolved_store = Path(os.path.realpath(self._store_dir)).resolve()
+        resolved_content = Path(os.path.realpath(content_path)).resolve()
+        resolved_meta = Path(os.path.realpath(meta_path)).resolve()
 
-        # Symlink escape check
-        real_store = os.path.realpath(self._store_dir)
-        if not os.path.realpath(content_path).startswith(real_store) or not os.path.realpath(meta_path).startswith(real_store):
+        if not resolved_content.is_relative_to(resolved_store) or not resolved_meta.is_relative_to(resolved_store):
             raise ValueError(f"Symlink escape attempt detected for artifact ID '{clean_id}'")
 
         return content_path, meta_path

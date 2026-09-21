@@ -117,6 +117,10 @@ class ContextBudgetPlan:
     offload_count: int = 0
     evict_count: int = 0
     decisions: list[ContextDecision] = field(default_factory=list)
+    fallback_attempted: bool = False
+    fallback_effective: bool = False
+    budget_compliant: bool = True
+    budget_violation_reason: str | None = None
 
 
 @dataclass
@@ -135,6 +139,8 @@ class ContextBudgetMetrics:
     budget_violations: int = 0
     critical_retention_count: int = 0
     recovery_failures: int = 0
+    fallback_count: int = 0
+    fallback_success_count: int = 0
 
 
 # Test framework output patterns
@@ -153,6 +159,198 @@ _ERROR_PATTERNS = (
     re.compile(r"\bcommand failed with exit code\b", re.IGNORECASE),
     re.compile(r"\bFAILED\s+[^\n]+::", re.IGNORECASE),
 )
+
+# Natural language and explicit constraint detection patterns
+_CONSTRAINT_PATTERNS = (
+    re.compile(r"\b(?:critical\s+)?constraints?:", re.IGNORECASE),
+    re.compile(r"\b(?:security|safety)\s+(?:rules?|constraints?)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:do\s+not|don't|must\s+not|you\s+must\s+not|cannot|can't|never)\s+"
+        r"(?:modify|edit|delete|remove|run|change|touch|alter|commit|execute|import|use|break|drop|mutate)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b(?:use\s+only|strictly\s+use|only\s+use)\b", re.IGNORECASE),
+    re.compile(r"\bkeep\s+(?:the\s+)?[^\n\.\,]+backward[s]?\s+compatible\b", re.IGNORECASE),
+    re.compile(r"\bbackward[s]?\s+compatibility\s+(?:is\s+required|must\s+be\s+maintained)\b", re.IGNORECASE),
+    re.compile(r"\b(?:strictly\s+prohibited|forbidden|mandatory|strictly\s+required)\b", re.IGNORECASE),
+    re.compile(r"\bdo\s+not\s+(?:break|remove|rename)\b", re.IGNORECASE),
+)
+
+
+def is_constraint_text(text: str) -> bool:
+    """Deterministic check for explicit or natural-language task constraints."""
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _CONSTRAINT_PATTERNS)
+
+
+_SALIENT_ERROR_LINE = re.compile(
+    r"(?:AssertionError|Error|Exception|FAILED|Traceback|failed with exit code)",
+    re.IGNORECASE,
+)
+_SALIENT_VERIF_LINE = re.compile(
+    r"(?:PASSED|\bpassed in\b|\b\d+ passed\b|\btest session starts\b)",
+    re.IGNORECASE,
+)
+_SALIENT_FILE_PATH = re.compile(
+    r"\b(?:[a-zA-Z0-9_\.\-]+/[a-zA-Z0-9_\.\-]+(?:\.[a-zA-Z0-9]+)?)\b"
+)
+
+
+def build_compact_preview(content: str, max_chars: int = 180) -> str:
+    """Build a concise, semantically rich preview of content for compression.
+    
+    Extracts salient lines (constraints, errors, verifications, file paths, head/tail)
+    rather than naive string slicing.
+    """
+    lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
+    if not lines:
+        return ""
+
+    salient_lines: list[str] = []
+
+    # 1. Constraint lines (never drop constraints)
+    for ln in lines:
+        if is_constraint_text(ln):
+            salient_lines.append(ln)
+            break
+
+    # 2. Error line
+    for ln in lines:
+        if _SALIENT_ERROR_LINE.search(ln) and ln not in salient_lines:
+            salient_lines.append(ln)
+            break
+
+    # 3. Verification line
+    for ln in lines:
+        if _SALIENT_VERIF_LINE.search(ln) and ln not in salient_lines:
+            salient_lines.append(ln)
+            break
+
+    # 4. File path line
+    for ln in lines:
+        if _SALIENT_FILE_PATH.search(ln) and ln not in salient_lines and len(salient_lines) < 2:
+            salient_lines.append(ln)
+            break
+
+    # 5. Head and tail lines if salient lines are sparse
+    if not salient_lines:
+        salient_lines.append(lines[0])
+        if len(lines) > 1 and lines[-1] != lines[0]:
+            salient_lines.append(lines[-1])
+    elif len(salient_lines) == 1 and len(lines) > 1:
+        if lines[0] not in salient_lines:
+            salient_lines.insert(0, lines[0])
+
+    combined = " | ".join(salient_lines)
+    if len(combined) > max_chars:
+        combined = combined[: max_chars - 3] + "..."
+    return f"[Summary: {combined}]"
+
+
+def validate_tool_pair_integrity(messages: list[dict[str, Any]]) -> bool:
+    """Validate that all tool calls and tool results have intact pairs and matching IDs.
+    
+    Returns False if:
+    - There is a tool_result without a preceding matching assistant tool call
+    - There is an assistant tool call without a matching tool_result
+    - The tool call ID / toolUseId is missing or mismatched
+    """
+    call_ids: set[str] = set()
+    open_calls: list[str] = []
+
+    for msg in messages:
+        role = msg.get("role")
+        if role == "assistant_tool_call":
+            call_id = msg.get("toolUseId") or msg.get("id") or msg.get("tool_call_id")
+            if not call_id:
+                return False
+            call_ids.add(str(call_id))
+            open_calls.append(str(call_id))
+        elif role == "assistant" and "tool_calls" in msg:
+            for tc in msg.get("tool_calls", []):
+                call_id = tc.get("id")
+                if not call_id:
+                    return False
+                call_ids.add(str(call_id))
+                open_calls.append(str(call_id))
+        elif role in ("tool", "tool_result"):
+            res_id = msg.get("toolUseId") or msg.get("tool_call_id") or msg.get("id")
+            if not res_id:
+                return False
+            res_id_str = str(res_id)
+            if res_id_str not in call_ids:
+                return False
+            if res_id_str in open_calls:
+                open_calls.remove(res_id_str)
+
+    return len(open_calls) == 0
+
+
+def sanitize_tool_pair_invariants(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Sanitize message sequence to preserve tool call / result pair invariants.
+    
+    If an external compactor or slicing operation produced orphan tool results (missing their
+    preceding tool call) or dangling tool calls (missing their tool result), cleans them up
+    so model provider APIs and integrity checks pass.
+    """
+    call_ids: set[str] = set()
+    result_ids: set[str] = set()
+
+    for msg in messages:
+        role = str(msg.get("role", ""))
+        if role == "assistant_tool_call":
+            cid = msg.get("toolUseId") or msg.get("id") or msg.get("tool_call_id")
+            if cid:
+                call_ids.add(str(cid))
+        elif role == "assistant" and "tool_calls" in msg:
+            for tc in msg.get("tool_calls", []):
+                cid = tc.get("id")
+                if cid:
+                    call_ids.add(str(cid))
+        elif role in ("tool", "tool_result"):
+            rid = msg.get("toolUseId") or msg.get("tool_call_id") or msg.get("id")
+            if rid:
+                result_ids.add(str(rid))
+
+    # Only pairs that have BOTH call and result are valid
+    valid_pair_ids = call_ids & result_ids
+
+    sanitized: list[dict[str, Any]] = []
+    seen_calls: set[str] = set()
+
+    for msg in messages:
+        role = str(msg.get("role", ""))
+        if role == "assistant_tool_call":
+            cid = msg.get("toolUseId") or msg.get("id") or msg.get("tool_call_id")
+            if cid and str(cid) not in valid_pair_ids:
+                continue
+            if cid:
+                seen_calls.add(str(cid))
+            sanitized.append(msg)
+        elif role == "assistant" and "tool_calls" in msg:
+            valid_calls = [tc for tc in msg.get("tool_calls", []) if str(tc.get("id", "")) in valid_pair_ids]
+            for tc in valid_calls:
+                seen_calls.add(str(tc.get("id", "")))
+            if not valid_calls and not msg.get("content"):
+                continue
+            msg_copy = dict(msg)
+            if valid_calls:
+                msg_copy["tool_calls"] = valid_calls
+            else:
+                msg_copy.pop("tool_calls", None)
+            sanitized.append(msg_copy)
+        elif role in ("tool", "tool_result"):
+            rid = msg.get("toolUseId") or msg.get("tool_call_id") or msg.get("id")
+            if rid and str(rid) not in valid_pair_ids:
+                continue
+            if rid and str(rid) not in seen_calls:
+                continue
+            sanitized.append(msg)
+        else:
+            sanitized.append(msg)
+
+    return sanitized
 
 
 class ContextBudgetManager:
@@ -293,15 +491,7 @@ class ContextBudgetManager:
                 reasons=["stable_task_state"],
             )
 
-        content_lower = content.lower()
-        has_constraint = (
-            "constraint:" in content_lower
-            or "constraints:" in content_lower
-            or "critical constraint" in content_lower
-            or "security constraint" in content_lower
-            or "security rule" in content_lower
-        )
-        if has_constraint:
+        if is_constraint_text(content):
             return ContextItem(
                 item_id=item_id,
                 message_index=index,
@@ -398,7 +588,27 @@ class ContextBudgetManager:
                 reasons=reasons,
             )
 
-        # 7. Tool Evidence: Normal tool results (read_file, grep, etc.)
+        # 7. Tool Evidence: Normal tool calls and results (read_file, grep, etc.)
+        if role in ("assistant_tool_call", "tool_call"):
+            is_associated_protected = (
+                (index + 1 == latest_verification_index)
+                or (index + 1 == latest_error_index)
+            )
+            reasons.append("tool_call")
+            return ContextItem(
+                item_id=item_id,
+                message_index=index,
+                zone=ContextZone.TOOL_EVIDENCE,
+                role=role,
+                source=tool_name or "tool_call",
+                estimated_tokens=estimated_tokens,
+                compressible=False,
+                externalizable=False,
+                recoverable=False,
+                protected=is_associated_protected,
+                reasons=reasons,
+            )
+
         if role in ("tool", "tool_result"):
             is_large = estimated_tokens >= self.config.offload_threshold_tokens
             reasons.append("tool_result")
@@ -615,7 +825,7 @@ class ContextBudgetManager:
                 ContextZone.VERIFICATION,
                 ContextZone.ERROR_EVIDENCE,
             ):
-                compressed_tokens = min(item.estimated_tokens, 15)
+                compressed_tokens = min(item.estimated_tokens, 25)
                 freed = max(0, item.estimated_tokens - compressed_tokens)
                 current_estimate -= freed
                 decisions_by_idx[idx] = ContextDecision(
@@ -626,6 +836,26 @@ class ContextBudgetManager:
                     original_tokens=item.estimated_tokens,
                     target_tokens=compressed_tokens,
                     reason=f"compress_{item.zone.value}",
+                )
+                continue
+
+            # 4. If still over budget and item is not protected, evict low-priority conversation/tool results
+            if current_estimate > available_budget and not item.protected and item.zone in (
+                ContextZone.CONVERSATION,
+                ContextZone.TOOL_EVIDENCE,
+                ContextZone.MEMORY,
+            ):
+                tombstone_tokens = 1 if item.role in ("tool", "tool_result") else 0
+                freed = max(0, item.estimated_tokens - tombstone_tokens)
+                current_estimate -= freed
+                decisions_by_idx[idx] = ContextDecision(
+                    item_id=item.item_id,
+                    message_index=idx,
+                    action=ContextAction.EVICT,
+                    score=item.importance_score,
+                    original_tokens=item.estimated_tokens,
+                    target_tokens=tombstone_tokens,
+                    reason=f"evict_over_budget_{item.zone.value}",
                 )
                 continue
 
@@ -690,8 +920,9 @@ class ContextBudgetManager:
 
             if action == ContextAction.KEEP:
                 active_metrics.kept_tokens += decision.original_tokens
-                if "protected" in decision.reason:
+                if "protected" in decision.reason or decision.reason == "task_constraint":
                     active_metrics.protected_items += 1
+                    active_metrics.critical_retention_count += 1
                 modified.append(dict(msg))
 
             elif action == ContextAction.OFFLOAD:
@@ -726,11 +957,10 @@ class ContextBudgetManager:
 
             elif action == ContextAction.COMPRESS:
                 content = str(msg.get("content", "") or "")
-                first_line = content.strip().split("\n")[0][:30] if content.strip() else ""
-                if len(content) <= 50:
+                if len(content) <= 60:
                     compressed_content = content
                 else:
-                    compressed_content = f"[Summary: {first_line}...]"
+                    compressed_content = build_compact_preview(content, max_chars=160)
                 active_metrics.compressed_tokens += max(0, decision.original_tokens - estimate_tokens(compressed_content))
                 new_msg = dict(msg)
                 new_msg["content"] = compressed_content
@@ -739,10 +969,14 @@ class ContextBudgetManager:
 
             elif action == ContextAction.EVICT:
                 active_metrics.evicted_tokens += decision.original_tokens
-                # Invariant preservation: if role is tool_result, replace with minimal tombstone
+                # Invariant preservation: maintain paired tool_call and tool_result tombstones
                 if role in ("tool", "tool_result"):
                     new_msg = dict(msg)
                     new_msg["content"] = "[Output cleared]"
+                    new_msg["_context_action"] = "evict"
+                    modified.append(new_msg)
+                elif role in ("assistant_tool_call", "tool_call"):
+                    new_msg = dict(msg)
                     new_msg["_context_action"] = "evict"
                     modified.append(new_msg)
                 elif role in ("assistant_progress", "thought", "thinking"):
@@ -752,28 +986,74 @@ class ContextBudgetManager:
                     # Non-tool conversational message evicted
                     continue
 
-        # Check if fallback to compactor is needed
+        # Evaluate token count after applying initial decisions
         current_tokens = sum(estimate_message_tokens(m) for m in modified)
+        tokens_before_fallback = current_tokens
+
+        # Track tokens belonging to protected items
+        protected_tokens = sum(
+            d.original_tokens for d in plan.decisions if d.action == ContextAction.KEEP and "protected" in d.reason
+        )
+
+        # Fallback to compactor if still over budget
         if current_tokens > plan.budget_tokens and compactor is not None:
-            active_metrics.budget_violations += 1
+            plan.fallback_attempted = True
+            active_metrics.fallback_count += 1
             logger.info(
                 "Context budget still exceeded (%d > %d), invoking compactor fallback",
                 current_tokens,
                 plan.budget_tokens,
             )
-            try:
-                if hasattr(compactor, "compact_on_high_water"):
-                    compact_res = compactor.compact_on_high_water(modified)
-                    if compact_res and compact_res.effective:
-                        modified = compact_res.messages
-                elif hasattr(compactor, "try_auto_compact"):
-                    compact_res = compactor.try_auto_compact(modified)
-                    if compact_res and compact_res.effective:
-                        modified = compact_res.messages
-            except Exception as exc:
-                logger.warning("Compactor fallback failed: %s", exc)
 
-        active_metrics.tokens_after += sum(estimate_message_tokens(m) for m in modified)
+            # Step 1: Real ContextCompactor.process_request
+            try:
+                if hasattr(compactor, "process_request"):
+                    compact_res = compactor.process_request(modified)
+                    if compact_res and getattr(compact_res, "messages", None):
+                        candidate_msgs = sanitize_tool_pair_invariants(compact_res.messages)
+                        candidate_tokens = sum(estimate_message_tokens(m) for m in candidate_msgs)
+                        if candidate_tokens < current_tokens:
+                            modified = candidate_msgs
+                            current_tokens = candidate_tokens
+                            plan.fallback_effective = True
+            except Exception as exc:
+                logger.warning("Compactor process_request fallback failed: %s", exc)
+
+            # Step 2: Severe overflow -> ContextCompactor.reactive_recover
+            if current_tokens > plan.budget_tokens and hasattr(compactor, "reactive_recover"):
+                try:
+                    reactive_res = compactor.reactive_recover(
+                        modified,
+                        error=f"Context overflow: {current_tokens} tokens exceeds budget {plan.budget_tokens}",
+                    )
+                    if reactive_res and getattr(reactive_res, "messages", None):
+                        candidate_msgs = sanitize_tool_pair_invariants(reactive_res.messages)
+                        candidate_tokens = sum(estimate_message_tokens(m) for m in candidate_msgs)
+                        if candidate_tokens < current_tokens:
+                            modified = candidate_msgs
+                            current_tokens = candidate_tokens
+                            plan.fallback_effective = True
+                except Exception as exc:
+                    logger.warning("Compactor reactive_recover fallback failed: %s", exc)
+
+            if plan.fallback_effective:
+                active_metrics.fallback_success_count += 1
+
+        modified = sanitize_tool_pair_invariants(modified)
+        current_tokens = sum(estimate_message_tokens(m) for m in modified)
+        plan.tokens_after_estimate = current_tokens
+        if current_tokens <= plan.budget_tokens:
+            plan.budget_compliant = True
+            plan.budget_violation_reason = None
+        else:
+            plan.budget_compliant = False
+            active_metrics.budget_violations += 1
+            if protected_tokens > plan.budget_tokens:
+                plan.budget_violation_reason = "protected_context_exceeds_budget"
+            else:
+                plan.budget_violation_reason = "insufficient_compaction"
+
+        active_metrics.tokens_after += current_tokens
         return modified, active_metrics
 
     def plan_and_apply(

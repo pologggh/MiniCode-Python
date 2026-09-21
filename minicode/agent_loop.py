@@ -1155,6 +1155,10 @@ def run_agent_turn(
     compaction_breaker: CompactionCircuitBreaker | None = CompactionCircuitBreaker()
     cost_control: CostControlLoop | None = None
     context_artifact_store: ContextArtifactStore = ContextArtifactStore(cwd)
+    try:
+        context_artifact_store.cleanup(retention_days=7, max_artifacts=500)
+    except Exception:
+        pass
     context_budget_manager: ContextBudgetManager = ContextBudgetManager(workspace=cwd)
     context_budget_metrics: ContextBudgetMetrics = ContextBudgetMetrics()
     active_execution_trace = ExecutionTrace()

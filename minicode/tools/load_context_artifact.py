@@ -41,6 +41,7 @@ def _validate(input_data: dict[str, Any]) -> dict[str, Any]:
 def create_load_context_artifact_tool(
     cwd: str,
     store: ContextArtifactStore | None = None,
+    metrics: Any = None,
 ) -> ToolDefinition:
     """Create the load_context_artifact tool bound to workspace store."""
     artifact_store = store or ContextArtifactStore(cwd)
@@ -50,17 +51,27 @@ def create_load_context_artifact_tool(
         offset = input_data.get("offset", 0)
         limit = input_data.get("limit", 4000)
 
-        content, meta = artifact_store.read_range(
-            artifact_id=artifact_id,
-            offset=offset,
-            limit=limit,
-        )
+        active_metrics = metrics or getattr(_context, "context_budget_metrics", None) or getattr(_context, "metrics", None)
+
+        try:
+            content, meta = artifact_store.read_range(
+                artifact_id=artifact_id,
+                offset=offset,
+                limit=limit,
+            )
+        except Exception:
+            content, meta = None, None
         if content is None or meta is None:
+            if active_metrics and hasattr(active_metrics, "recovery_failures"):
+                active_metrics.recovery_failures += 1
             logger.warning("Attempted to load missing/inaccessible artifact: %s", artifact_id)
             return ToolResult(
                 ok=False,
                 output=f"Context artifact not found or inaccessible: {artifact_id}",
             )
+
+        if active_metrics and hasattr(active_metrics, "artifact_recovery_count"):
+            active_metrics.artifact_recovery_count += 1
 
         logger.info(
             "Recovered context artifact %s range [%d:%d] (%d chars)",
