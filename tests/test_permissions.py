@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 import minicode.permissions as permissions_module
+from minicode.auto_mode import PermissionMode
 from minicode.permissions import PermissionManager, _classify_dangerous_command, _is_within_directory
 
 
@@ -234,4 +235,76 @@ def test_ensure_tool_action_scoped_lifecycle(tmp_path: Path) -> None:
     current_decision = "allow_once"
     manager.ensure_tool_action("mcp__run", scope="safe_query")
     assert len(prompts) == 7
+
+
+def test_native_allow_once_does_not_cache_in_session(tmp_path: Path) -> None:
+    """Verify that allow_once across command, edit, and path access does NOT cache into session."""
+    prompts: list[dict] = []
+    current_decision = "allow_once"
+
+    def prompt(request: dict):
+        prompts.append(request)
+        return {"decision": current_decision}
+
+    manager = PermissionManager(str(tmp_path), prompt=prompt, auto_mode=PermissionMode.DEFAULT)
+
+    # 1. ensure_command: allow_once
+    current_decision = "allow_once"
+    manager.ensure_command("pytest", ["tests/"], str(tmp_path))
+    assert len(prompts) == 1
+
+    # Second call with same command must prompt again!
+    manager.ensure_command("pytest", ["tests/"], str(tmp_path))
+    assert len(prompts) == 2
+
+    # allow_always persists
+    current_decision = "allow_always"
+    manager.ensure_command("pytest", ["tests/"], str(tmp_path))
+    assert len(prompts) == 3
+
+    # Subsequent call does not prompt
+    manager.ensure_command("pytest", ["tests/"], str(tmp_path))
+    assert len(prompts) == 3
+
+    # 2. ensure_edit: allow_once
+    test_file = str(tmp_path / "app.py")
+    current_decision = "allow_once"
+    manager.ensure_edit(test_file, "+ line 1")
+    assert len(prompts) == 4
+
+    # Second call with same edit must prompt again!
+    manager.ensure_edit(test_file, "+ line 2")
+    assert len(prompts) == 5
+
+    # allow_always persists
+    current_decision = "allow_always"
+    manager.ensure_edit(test_file, "+ line 3")
+    assert len(prompts) == 6
+
+    # Subsequent edit to same file does not prompt
+    manager.ensure_edit(test_file, "+ line 4")
+    assert len(prompts) == 6
+
+    # 3. ensure_path_access: allow_once
+    outside_dir = tmp_path.parent / "outside_dir"
+    outside_dir.mkdir(exist_ok=True)
+    outside_file = str(outside_dir / "data.txt")
+
+    current_decision = "allow_once"
+    manager.ensure_path_access(outside_file, "read")
+    assert len(prompts) == 7
+
+    # Second access to same path must prompt again!
+    manager.ensure_path_access(outside_file, "read")
+    assert len(prompts) == 8
+
+    # allow_always persists
+    current_decision = "allow_always"
+    manager.ensure_path_access(outside_file, "read")
+    assert len(prompts) == 9
+
+    # Subsequent access does not prompt
+    manager.ensure_path_access(outside_file, "read")
+    assert len(prompts) == 9
+
 

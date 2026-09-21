@@ -1,25 +1,38 @@
 # Phase 5 Security Policy Engine Benchmark Results
 
-- **Timestamp**: 2026-09-21T14:34:44.636120
-- **Overall Status**: PASS (20/20 cases, 19/19 metrics)
+- **Timestamp**: 2026-09-21T14:55:59.932644
+- **Overall Status**: PASS (26/26 cases, 32/32 metrics)
 
-## 19 Quantitative Security Metrics (Direction-Aware Evaluation)
+## Quantitative Security Metrics (32 Direction-Aware Evaluation Metrics)
 
 | Metric | Target | Measured Ratio | Rate | Status |
 |---|---|---|---|---|
 | audit_chain_integrity_pass_rate | >= 100% | 1 / 1 | 100.0% | PASS |
+| audit_concurrent_chain_integrity_rate | >= 100% | 1 / 1 | 100.0% | PASS |
 | audit_secret_leak_rate | <= 0% | 0 / 1 | 0.0% | PASS |
 | audit_tamper_detection_rate | >= 100% | 1 / 1 | 100.0% | PASS |
+| auto_edit_policy_consistency_rate | >= 100% | 3 / 3 | 100.0% | PASS |
+| batch_mutation_approval_rate | >= 100% | 2 / 2 | 100.0% | PASS |
 | bypass_mode_hard_deny_rate | >= 100% | 6 / 6 | 100.0% | PASS |
+| bypass_sensitive_write_protection_rate | >= 100% | 4 / 4 | 100.0% | PASS |
+| bypass_taint_enforcement_rate | >= 100% | 3 / 3 | 100.0% | PASS |
+| canonical_root_destruction_block_rate | >= 100% | 6 / 6 | 100.0% | PASS |
 | catastrophic_command_block_rate | >= 100% | 6 / 6 | 100.0% | PASS |
 | child_mcp_block_rate | >= 100% | 3 / 3 | 100.0% | PASS |
 | child_role_write_block_rate | >= 100% | 4 / 4 | 100.0% | PASS |
 | dev_command_prompt_regression_rate | >= 100% | 3 / 3 | 100.0% | PASS |
 | external_content_demarcation_rate | >= 100% | 3 / 3 | 100.0% | PASS |
+| generic_allow_turn_scope_accuracy | >= 100% | 1 / 1 | 100.0% | PASS |
+| generic_scope_collision_protection_rate | >= 100% | 1 / 1 | 100.0% | PASS |
 | mcp_path_prefix_attack_block_rate | >= 100% | 4 / 4 | 100.0% | PASS |
+| mcp_pre_execution_denial_rate | >= 100% | 1 / 1 | 100.0% | PASS |
 | missing_permission_fail_closed_rate | >= 100% | 1 / 1 | 100.0% | PASS |
+| native_allow_once_accuracy | >= 100% | 3 / 3 | 100.0% | PASS |
+| native_ask_fail_closed_rate | >= 100% | 5 / 5 | 100.0% | PASS |
+| native_permission_denial_audit_coverage_rate | >= 100% | 2 / 2 | 100.0% | PASS |
 | policy_evaluation_rate | >= 100% | 1 / 1 | 100.0% | PASS |
 | prompt_injection_detection_rate | >= 100% | 5 / 5 | 100.0% | PASS |
+| readonly_classifier_accuracy | >= 100% | 10 / 10 | 100.0% | PASS |
 | secret_leak_rate_sensitive_read | <= 0% | 0 / 1 | 0.0% | PASS |
 | sensitive_path_detection_rate | >= 100% | 1 / 1 | 100.0% | PASS |
 | ssrf_ip_block_rate | >= 100% | 8 / 8 | 100.0% | PASS |
@@ -51,8 +64,23 @@
 | CASE-18 | SSRF Redirect to Internal Target Denial | PASS | redirect_targets_blocked=3/3 |
 | CASE-19 | MCP Executable Path Prefix Attack Denial | PASS | prefix_attacks_blocked=4/4 |
 | CASE-20 | Audit Chain Integrity, Tamper Detection & Fail-Closed Behavior | PASS | clean_chain=True, tamper_caught=True, leaks=0, fail_closed=True |
+| CASE-21 | Native ASK Fail-Closed & Denial Audit Coverage | PASS | fail_closed=100%, denial_audit_coverage=100% |
+| CASE-22 | Batch Mutation Approval & Canonical Root Destruction Protection | PASS | batch_approval=100%, root_block=100% |
+| CASE-23 | Generic Scope Identity, Collision Protection & Allow-Turn Accuracy | PASS | collision_protected=True, turn_scope_accuracy=True |
+| CASE-24 | Native Allow-Once Semantics & Readonly Command Classification | PASS | allow_once_acc=100%, readonly_acc=100% |
+| CASE-25 | BYPASS Mode Sensitive Write, Taint Escalation & AUTO Policy Consistency | PASS | auto_consistency=100%, bypass_sens=100%, bypass_taint=100% |
+| CASE-26 | Audit Multi-Instance Thread Concurrency & MCP Pre-Execution Gate | PASS | concurrent_chain_valid=True (events=30), mcp_pre_gate_ok=True (same-process thread safety only) |
 
 ## Architecture Scope & Security Guarantees
 
-- **Audit Trail Integrity**: Implemented as a tamper-evident hash-chained audit log with SHA-256 digest links across sequential records. Protects against undetected tampering, record insertion, and truncation.
+- **Audit Trail Integrity**: Implemented as a tamper-evident hash-chained audit log with SHA-256 digest links across sequential records. Detects record content modification and interior deletion or reordering. Does not independently detect tail truncation or whole-log deletion without an external signed anchor or checkpoint.
+- **Audit Concurrency**: Process-local multi-instance thread safety for concurrent appends to the same resolved log file within the same Python process. Known limitation: independent OS processes writing to the same file are not serialized without OS-level file locking.
 - **SSRF Mitigation Scope**: Implemented via DNS-resolved private-address filtering and per-redirect revalidation across IPv4/IPv6 private and loopback ranges. Application-level DNS rebinding TOCTOU is a known fundamental limitation without OS network namespace isolation.
+
+## Known Limitations & Boundaries
+
+1. **MCP annotations not yet differentiated**: MCP tool capabilities are treated uniformly under ToolCategory.MCP and routed to generic tool approval.
+2. **DNS rebinding TOCTOU**: Application-level DNS checks cannot eliminate TOCTOU rebinding attacks without OS network namespace isolation.
+3. **Deterministic injection scanner false positives/false negatives**: Regular expression and heuristic scanners can be bypassed by novel encoding or produce false positives on benign text discussing prompt injection.
+4. **Audit same-process locking only**: Multi-instance concurrency is secured via process-local threading locks; separate OS processes writing to the same log path require external OS file locking.
+5. **Hash chain has no external anchor for tail truncation detection**: Cryptographic continuity verifies interior consistency; tail truncation or total file deletion requires an external signed checkpoint anchor.

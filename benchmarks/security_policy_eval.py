@@ -25,6 +25,7 @@ CASE 20: Tamper-Evident Audit Chain Integrity, Tamper Detection & Fail-Closed Mi
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import datetime
 import json
 import os
@@ -540,7 +541,7 @@ def eval_case_15() -> CaseResult:
         tool_name="edit_file",
         input_data={"path": "notes.txt", "content": "clean"},
         cwd=".",
-        permission_mode=PermissionMode.AUTO,
+        permission_mode=PermissionMode.BYPASS,
         untrusted_context_seen=False,
     )
     assess_clean = engine.evaluate(req_clean)
@@ -550,12 +551,12 @@ def eval_case_15() -> CaseResult:
         tool_name="edit_file",
         input_data={"path": "notes.txt", "content": "clean"},
         cwd=".",
-        permission_mode=PermissionMode.AUTO,
+        permission_mode=PermissionMode.BYPASS,
         untrusted_context_seen=True,
     )
     assess_tainted = engine.evaluate(req_tainted)
 
-    # Clean is ALLOW under AUTO; Tainted escalates to ASK!
+    # Clean is ALLOW under BYPASS; Tainted escalates to ASK even under BYPASS!
     ok = (
         assess_clean.decision == SecurityDecision.ALLOW
         and assess_tainted.decision == SecurityDecision.ASK
@@ -811,6 +812,455 @@ def eval_case_20(temp_dir: Path) -> CaseResult:
     )
 
 
+def eval_case_21(temp_dir: Path) -> CaseResult:
+    """CASE 21: Native ASK Fail-Closed & Denial Audit Coverage."""
+    execution_counts = {"write_file": 0, "edit_file": 0, "run_command": 0, "batch_delete": 0, "mcp": 0}
+
+    def make_runner(key: str):
+        def _runner(inp, ctx):
+            execution_counts[key] += 1
+            return ToolResult(ok=True, output=f"{key} executed")
+        return _runner
+
+    tools = [
+        ToolDefinition("write_file", "Write", {"type": "object"}, lambda x: x, make_runner("write_file")),
+        ToolDefinition("edit_file", "Edit", {"type": "object"}, lambda x: x, make_runner("edit_file")),
+        ToolDefinition("run_command", "Run", {"type": "object"}, lambda x: x, make_runner("run_command")),
+        ToolDefinition("batch_delete", "Del", {"type": "object"}, lambda x: x, make_runner("batch_delete")),
+        ToolDefinition("mcp__server__query", "MCP", {"type": "object"}, lambda x: x, make_runner("mcp")),
+    ]
+    policy = SecurityPolicyEngine()
+    audit_file = temp_dir / "audit_case21.jsonl"
+    audit = SecurityAuditLog(audit_file)
+    registry = ToolRegistry(tools, security_policy=policy, security_audit=audit)
+    context_none = ToolContext(cwd=str(temp_dir), permissions=None)
+
+    calls = [
+        ("write_file", {"path": "a.txt", "content": "hi"}),
+        ("edit_file", {"path": "a.txt", "content": "hi"}),
+        ("run_command", {"command": "pytest", "args": ["tests/"]}),
+        ("batch_delete", {"path": "b.txt"}),
+        ("mcp__server__query", {"sql": "SELECT 1"}),
+    ]
+    fail_closed_passes = 0
+    for name, inp in calls:
+        res = registry.execute(name, inp, context_none)
+        if res.ok is False and "permission manager missing" in res.output:
+            fail_closed_passes += 1
+
+    total_executions = sum(execution_counts.values())
+    rec_fail_closed = MetricRecord(
+        numerator=fail_closed_passes if total_executions == 0 else 0,
+        denominator=len(calls),
+        rate=(fail_closed_passes / len(calls)) if total_executions == 0 else 0.0,
+        target=1.0,
+        comparison="gte",
+    )
+
+    perms_no_prompt = PermissionManager(workspace_root=str(temp_dir), prompt=None, auto_mode=PermissionMode.DEFAULT)
+    def native_write(inp, ctx):
+        ctx.permissions.ensure_edit(str(Path(ctx.cwd) / inp["path"]), "diff")
+        return ToolResult(ok=True, output="ok")
+    def native_cmd(inp, ctx):
+        ctx.permissions.ensure_command(inp["command"], inp.get("args", []), ctx.cwd)
+        return ToolResult(ok=True, output="ok")
+
+    tools_native = [
+        ToolDefinition("write_file", "Write", {"type": "object"}, lambda x: x, native_write),
+        ToolDefinition("run_command", "Run", {"type": "object"}, lambda x: x, native_cmd),
+    ]
+    audit_file_native = temp_dir / "audit_case21_native.jsonl"
+    audit_native = SecurityAuditLog(audit_file_native)
+    reg_native = ToolRegistry(tools_native, security_policy=policy, security_audit=audit_native)
+    context_no_prompt = ToolContext(cwd=str(temp_dir), permissions=perms_no_prompt)
+
+    reg_native.execute("write_file", {"path": "foo.py", "content": "pass"}, context_no_prompt)
+    reg_native.execute("run_command", {"command": "npm", "args": ["test"]}, context_no_prompt)
+
+    with open(audit_file_native, "r", encoding="utf-8") as f:
+        events = [json.loads(line) for line in f if line.strip()]
+
+    denied_audits = sum(1 for e in events if e.get("authorization_outcome") == "DENIED" and e.get("result_ok") is False)
+    rec_audit_coverage = MetricRecord(
+        numerator=denied_audits,
+        denominator=2,
+        rate=denied_audits / 2,
+        target=1.0,
+        comparison="gte",
+    )
+
+    passed = rec_fail_closed.passed and rec_audit_coverage.passed
+    return CaseResult(
+        case_id="CASE-21",
+        name="Native ASK Fail-Closed & Denial Audit Coverage",
+        passed=passed,
+        metrics={
+            "native_ask_fail_closed_rate": rec_fail_closed,
+            "native_permission_denial_audit_coverage_rate": rec_audit_coverage,
+        },
+        details=f"fail_closed={rec_fail_closed.rate * 100:.0f}%, denial_audit_coverage={rec_audit_coverage.rate * 100:.0f}%",
+    )
+
+
+def eval_case_22(temp_dir: Path) -> CaseResult:
+    """CASE 22: Batch Mutation Approval & Canonical Root Destruction Protection."""
+    policy = SecurityPolicyEngine()
+
+    batch_tools = ["batch_copy", "batch_move"]
+    batch_approval_passes = 0
+    for b_tool in batch_tools:
+        req = SecurityRequest(
+            tool_name=b_tool,
+            input_data={"source": "src/a", "destination": "dst/b"},
+            cwd=str(temp_dir),
+            permission_mode=PermissionMode.DEFAULT,
+        )
+        asmt = policy.evaluate(req)
+        if asmt.decision == SecurityDecision.ASK and asmt.approval_route == ApprovalRoute.GENERIC_TOOL:
+            batch_approval_passes += 1
+
+    rec_batch_approval = MetricRecord(
+        numerator=batch_approval_passes,
+        denominator=len(batch_tools),
+        rate=batch_approval_passes / len(batch_tools),
+        target=1.0,
+        comparison="gte",
+    )
+
+    test_dests = [".", "./", "sub/..", str(temp_dir), "a/../"]
+    blocked_count = 0
+    for d in test_dests:
+        req = SecurityRequest(
+            tool_name="batch_copy",
+            input_data={"source": "src", "destination": d},
+            cwd=str(temp_dir),
+        )
+        asmt = policy.evaluate(req)
+        if asmt.decision == SecurityDecision.DENY and asmt.risk == SecurityRisk.CRITICAL and asmt.hard_deny:
+            blocked_count += 1
+
+    req_rec = SecurityRequest(
+        tool_name="batch_copy",
+        input_data={"source": ".", "destination": "nested/backup"},
+        cwd=str(temp_dir),
+    )
+    asmt_rec = policy.evaluate(req_rec)
+    if asmt_rec.decision == SecurityDecision.DENY and asmt_rec.risk == SecurityRisk.CRITICAL and asmt_rec.hard_deny:
+        blocked_count += 1
+
+    total_dest_cases = len(test_dests) + 1
+    rec_root_destroy = MetricRecord(
+        numerator=blocked_count,
+        denominator=total_dest_cases,
+        rate=blocked_count / total_dest_cases,
+        target=1.0,
+        comparison="gte",
+    )
+
+    passed = rec_batch_approval.passed and rec_root_destroy.passed
+    return CaseResult(
+        case_id="CASE-22",
+        name="Batch Mutation Approval & Canonical Root Destruction Protection",
+        passed=passed,
+        metrics={
+            "batch_mutation_approval_rate": rec_batch_approval,
+            "canonical_root_destruction_block_rate": rec_root_destroy,
+        },
+        details=f"batch_approval={rec_batch_approval.rate * 100:.0f}%, root_block={rec_root_destroy.rate * 100:.0f}%",
+    )
+
+
+def eval_case_23(temp_dir: Path) -> CaseResult:
+    """CASE 23: Generic Scope Identity, Collision Protection & Allow-Turn Accuracy."""
+    prompt_calls = []
+    def prompt_handler(req):
+        prompt_calls.append(req)
+        return {"decision": "allow_turn"}
+
+    perms = PermissionManager(workspace_root=str(temp_dir), prompt=prompt_handler)
+    perms.begin_turn()
+    policy = SecurityPolicyEngine()
+    mcp_tool = ToolDefinition("mcp__server__run", "MCP", {"type": "object"}, lambda x: x, lambda i, c: ToolResult(ok=True, output="Ran"))
+    registry = ToolRegistry([mcp_tool], security_policy=policy)
+    context = ToolContext(cwd=str(temp_dir), permissions=perms)
+
+    payload_a = {"prefix": "K" * 200, "action": "read_customers"}
+    payload_b = {"prefix": "K" * 200, "action": "drop_customers"}
+
+    registry.execute("mcp__server__run", payload_a, context)
+    prompt_count_after_a = len(prompt_calls)
+
+    registry.execute("mcp__server__run", payload_b, context)
+    prompt_count_after_b = len(prompt_calls)
+
+    collision_prevented = (prompt_count_after_a == 1) and (prompt_count_after_b == 2)
+    rec_collision = MetricRecord(
+        numerator=1 if collision_prevented else 0,
+        denominator=1,
+        rate=1.0 if collision_prevented else 0.0,
+        target=1.0,
+        comparison="gte",
+    )
+
+    registry.execute("mcp__server__run", payload_a, context)
+    prompt_count_after_repeat_a = len(prompt_calls)
+    turn_accuracy_ok = (prompt_count_after_repeat_a == 2)
+
+    rec_turn_acc = MetricRecord(
+        numerator=1 if turn_accuracy_ok else 0,
+        denominator=1,
+        rate=1.0 if turn_accuracy_ok else 0.0,
+        target=1.0,
+        comparison="gte",
+    )
+
+    passed = rec_collision.passed and rec_turn_acc.passed
+    return CaseResult(
+        case_id="CASE-23",
+        name="Generic Scope Identity, Collision Protection & Allow-Turn Accuracy",
+        passed=passed,
+        metrics={
+            "generic_scope_collision_protection_rate": rec_collision,
+            "generic_allow_turn_scope_accuracy": rec_turn_acc,
+        },
+        details=f"collision_protected={collision_prevented}, turn_scope_accuracy={turn_accuracy_ok}",
+    )
+
+
+def eval_case_24(temp_dir: Path) -> CaseResult:
+    """CASE 24: Native Allow-Once Semantics & Readonly Command Classification."""
+    prompt_counts = 0
+    def prompt_handler(req):
+        nonlocal prompt_counts
+        prompt_counts += 1
+        return {"decision": "allow_once"}
+
+    perms = PermissionManager(workspace_root=str(temp_dir), prompt=prompt_handler, auto_mode=PermissionMode.DEFAULT)
+
+    perms.ensure_command("cargo", ["build"], str(temp_dir))
+    perms.ensure_command("cargo", ["build"], str(temp_dir))
+    cmd_prompts = prompt_counts
+
+    f_path = str(temp_dir / "code.rs")
+    perms.ensure_edit(f_path, "+ diff1")
+    perms.ensure_edit(f_path, "+ diff2")
+    edit_prompts = prompt_counts - cmd_prompts
+
+    out_f = str(temp_dir.parent / "extra.txt")
+    perms.ensure_path_access(out_f, "write")
+    perms.ensure_path_access(out_f, "write")
+    path_prompts = prompt_counts - cmd_prompts - edit_prompts
+
+    allow_once_passes = sum([
+        1 if cmd_prompts == 2 else 0,
+        1 if edit_prompts == 2 else 0,
+        1 if path_prompts == 2 else 0,
+    ])
+    rec_allow_once = MetricRecord(
+        numerator=allow_once_passes,
+        denominator=3,
+        rate=allow_once_passes / 3,
+        target=1.0,
+        comparison="gte",
+    )
+
+    from minicode.security_rules import is_pure_readonly_command
+    readonly_cases = [
+        ("ls", ["-la"], True),
+        ("cat", ["file.txt"], True),
+        ("pwd", [], True),
+        ("grep", ["pattern", "file"], True),
+        ("sed", ["s/foo/bar/", "file"], True),
+        ("find", [".", "-name", "*.py"], True),
+        ("sed", ["-i", "s/foo/bar/", "file"], False),
+        ("find", [".", "-delete"], False),
+        ("rm", ["-f", "file"], False),
+        ("git", ["reset", "--hard"], False),
+    ]
+    ro_correct = 0
+    for cmd, args, expected in readonly_cases:
+        if is_pure_readonly_command(cmd, args) == expected:
+            ro_correct += 1
+
+    rec_ro = MetricRecord(
+        numerator=ro_correct,
+        denominator=len(readonly_cases),
+        rate=ro_correct / len(readonly_cases),
+        target=1.0,
+        comparison="gte",
+    )
+
+    passed = rec_allow_once.passed and rec_ro.passed
+    return CaseResult(
+        case_id="CASE-24",
+        name="Native Allow-Once Semantics & Readonly Command Classification",
+        passed=passed,
+        metrics={
+            "native_allow_once_accuracy": rec_allow_once,
+            "readonly_classifier_accuracy": rec_ro,
+        },
+        details=f"allow_once_acc={rec_allow_once.rate * 100:.0f}%, readonly_acc={rec_ro.rate * 100:.0f}%",
+    )
+
+
+def eval_case_25(temp_dir: Path) -> CaseResult:
+    """CASE 25: BYPASS Mode Sensitive Write, Taint Escalation & AUTO Policy Consistency."""
+    policy = SecurityPolicyEngine()
+
+    edit_tools = ["write_file", "edit_file", "patch_file"]
+    auto_consistent_count = 0
+    for tname in edit_tools:
+        req = SecurityRequest(
+            tool_name=tname,
+            input_data={"path": "normal_file.py", "content": "x = 1"},
+            cwd=str(temp_dir),
+            permission_mode=PermissionMode.AUTO,
+        )
+        asmt = policy.evaluate(req)
+        if asmt.decision == SecurityDecision.ASK and asmt.risk == SecurityRisk.MEDIUM and asmt.approval_route == ApprovalRoute.NATIVE_EDIT:
+            auto_consistent_count += 1
+
+    rec_auto_consistency = MetricRecord(
+        numerator=auto_consistent_count,
+        denominator=len(edit_tools),
+        rate=auto_consistent_count / len(edit_tools),
+        target=1.0,
+        comparison="gte",
+    )
+
+    sens_files = [".env", "cert.pem", "id_rsa.key", "credentials.json"]
+    bypass_sens_protected = 0
+    for s_file in sens_files:
+        req = SecurityRequest(
+            tool_name="write_file",
+            input_data={"path": s_file, "content": "secret_data"},
+            cwd=str(temp_dir),
+            permission_mode=PermissionMode.BYPASS,
+        )
+        asmt = policy.evaluate(req)
+        if asmt.decision == SecurityDecision.ASK and asmt.approval_route == ApprovalRoute.GENERIC_TOOL:
+            bypass_sens_protected += 1
+
+    rec_bypass_sens = MetricRecord(
+        numerator=bypass_sens_protected,
+        denominator=len(sens_files),
+        rate=bypass_sens_protected / len(sens_files),
+        target=1.0,
+        comparison="gte",
+    )
+
+    tainted_tools = [
+        ("run_command", {"command": "ls"}),
+        ("write_file", {"path": "clean.py", "content": "code"}),
+        ("mcp__query", {"table": "logs"}),
+    ]
+    taint_enforced_count = 0
+    for tname, inp in tainted_tools:
+        req = SecurityRequest(
+            tool_name=tname,
+            input_data=inp,
+            cwd=str(temp_dir),
+            permission_mode=PermissionMode.BYPASS,
+            untrusted_context_seen=True,
+        )
+        asmt = policy.evaluate(req)
+        if asmt.decision == SecurityDecision.ASK and asmt.approval_route == ApprovalRoute.GENERIC_TOOL:
+            taint_enforced_count += 1
+
+    rec_bypass_taint = MetricRecord(
+        numerator=taint_enforced_count,
+        denominator=len(tainted_tools),
+        rate=taint_enforced_count / len(tainted_tools),
+        target=1.0,
+        comparison="gte",
+    )
+
+    passed = rec_auto_consistency.passed and rec_bypass_sens.passed and rec_bypass_taint.passed
+    return CaseResult(
+        case_id="CASE-25",
+        name="BYPASS Mode Sensitive Write, Taint Escalation & AUTO Policy Consistency",
+        passed=passed,
+        metrics={
+            "auto_edit_policy_consistency_rate": rec_auto_consistency,
+            "bypass_sensitive_write_protection_rate": rec_bypass_sens,
+            "bypass_taint_enforcement_rate": rec_bypass_taint,
+        },
+        details=f"auto_consistency={rec_auto_consistency.rate * 100:.0f}%, bypass_sens={rec_bypass_sens.rate * 100:.0f}%, bypass_taint={rec_bypass_taint.rate * 100:.0f}%",
+    )
+
+
+def eval_case_26(temp_dir: Path) -> CaseResult:
+    """CASE 26: Audit Multi-Instance Thread Concurrency & MCP Pre-Execution Gate."""
+    audit_file = temp_dir / "concurrent_audit_eval.jsonl"
+    logger_a = SecurityAuditLog(audit_file)
+    logger_b = SecurityAuditLog(audit_file)
+
+    def write_events(logger_inst, prefix, count):
+        for i in range(count):
+            logger_inst.record_event(
+                tool_name=f"{prefix}_tool_{i}",
+                decision="ALLOW",
+                risk="SAFE",
+                output=f"output_{i}",
+            )
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        f1 = executor.submit(write_events, logger_a, "worker_A", 15)
+        f2 = executor.submit(write_events, logger_b, "worker_B", 15)
+        f1.result()
+        f2.result()
+
+    valid, total_events, first_invalid, reason = logger_a.verify_chain()
+    concurrent_chain_ok = valid and total_events == 30
+    rec_concurrent_audit = MetricRecord(
+        numerator=1 if concurrent_chain_ok else 0,
+        denominator=1,
+        rate=1.0 if concurrent_chain_ok else 0.0,
+        target=1.0,
+        comparison="gte",
+    )
+
+    mcp_call_count = 0
+    def fake_mcp_run(inp, ctx):
+        nonlocal mcp_call_count
+        mcp_call_count += 1
+        return ToolResult(ok=True, output="MCP Result")
+
+    mcp_tool = ToolDefinition("mcp__server__eval_mutate", "MCP mutate", {"type": "object"}, lambda x: x, fake_mcp_run)
+    policy = SecurityPolicyEngine()
+    registry = ToolRegistry([mcp_tool], security_policy=policy)
+    perms_deny = PermissionManager(workspace_root=str(temp_dir), prompt=lambda r: {"decision": "deny_once"})
+    context_deny = ToolContext(cwd=str(temp_dir), permissions=perms_deny)
+
+    res_deny = registry.execute("mcp__server__eval_mutate", {"action": "delete"}, context_deny)
+    mcp_pre_deny_ok = (res_deny.ok is False) and (mcp_call_count == 0)
+
+    perms_allow = PermissionManager(workspace_root=str(temp_dir), prompt=lambda r: {"decision": "allow_once"})
+    context_allow = ToolContext(cwd=str(temp_dir), permissions=perms_allow)
+    res_allow = registry.execute("mcp__server__eval_mutate", {"action": "insert"}, context_allow)
+    mcp_gate_full_ok = mcp_pre_deny_ok and (res_allow.ok is True) and (mcp_call_count == 1)
+
+    rec_mcp_gate = MetricRecord(
+        numerator=1 if mcp_gate_full_ok else 0,
+        denominator=1,
+        rate=1.0 if mcp_gate_full_ok else 0.0,
+        target=1.0,
+        comparison="gte",
+    )
+
+    passed = rec_concurrent_audit.passed and rec_mcp_gate.passed
+    return CaseResult(
+        case_id="CASE-26",
+        name="Audit Multi-Instance Thread Concurrency & MCP Pre-Execution Gate",
+        passed=passed,
+        metrics={
+            "audit_concurrent_chain_integrity_rate": rec_concurrent_audit,
+            "mcp_pre_execution_denial_rate": rec_mcp_gate,
+        },
+        details=f"concurrent_chain_valid={concurrent_chain_ok} (events={total_events}), mcp_pre_gate_ok={mcp_gate_full_ok} (same-process thread safety only)",
+    )
+
+
 def run_all_evaluations() -> dict[str, Any]:
     print("=" * 70)
     print("Starting Phase 5 Security Policy Engine Benchmark Suite")
@@ -840,6 +1290,12 @@ def run_all_evaluations() -> dict[str, Any]:
         cases.append(eval_case_18())
         cases.append(eval_case_19())
         cases.append(eval_case_20(temp_dir))
+        cases.append(eval_case_21(temp_dir))
+        cases.append(eval_case_22(temp_dir))
+        cases.append(eval_case_23(temp_dir))
+        cases.append(eval_case_24(temp_dir))
+        cases.append(eval_case_25(temp_dir))
+        cases.append(eval_case_26(temp_dir))
 
     # Aggregate all metric records across cases
     aggregated_metrics: dict[str, MetricRecord] = {}
@@ -870,7 +1326,6 @@ def run_all_evaluations() -> dict[str, Any]:
         ],
     }
 
-    # Save artifacts in benchmarks/
     bench_dir = Path("benchmarks")
     bench_dir.mkdir(exist_ok=True)
 
@@ -884,7 +1339,7 @@ def run_all_evaluations() -> dict[str, Any]:
         f"- **Overall Status**: {'PASS' if (all_cases_passed and all_metrics_passed) else 'FAIL'} "
         f"({results['passed_cases']}/{results['total_cases']} cases, {results['passed_metrics']}/{results['total_metrics']} metrics)",
         "",
-        "## 19 Quantitative Security Metrics (Direction-Aware Evaluation)",
+        f"## Quantitative Security Metrics ({len(aggregated_metrics)} Direction-Aware Evaluation Metrics)",
         "",
         "| Metric | Target | Measured Ratio | Rate | Status |",
         "|---|---|---|---|---|",
@@ -915,8 +1370,17 @@ def run_all_evaluations() -> dict[str, Any]:
             "",
             "## Architecture Scope & Security Guarantees",
             "",
-            "- **Audit Trail Integrity**: Implemented as a tamper-evident hash-chained audit log with SHA-256 digest links across sequential records. Protects against undetected tampering, record insertion, and truncation.",
+            "- **Audit Trail Integrity**: Implemented as a tamper-evident hash-chained audit log with SHA-256 digest links across sequential records. Detects record content modification and interior deletion or reordering. Does not independently detect tail truncation or whole-log deletion without an external signed anchor or checkpoint.",
+            "- **Audit Concurrency**: Process-local multi-instance thread safety for concurrent appends to the same resolved log file within the same Python process. Known limitation: independent OS processes writing to the same file are not serialized without OS-level file locking.",
             "- **SSRF Mitigation Scope**: Implemented via DNS-resolved private-address filtering and per-redirect revalidation across IPv4/IPv6 private and loopback ranges. Application-level DNS rebinding TOCTOU is a known fundamental limitation without OS network namespace isolation.",
+            "",
+            "## Known Limitations & Boundaries",
+            "",
+            "1. **MCP annotations not yet differentiated**: MCP tool capabilities are treated uniformly under ToolCategory.MCP and routed to generic tool approval.",
+            "2. **DNS rebinding TOCTOU**: Application-level DNS checks cannot eliminate TOCTOU rebinding attacks without OS network namespace isolation.",
+            "3. **Deterministic injection scanner false positives/false negatives**: Regular expression and heuristic scanners can be bypassed by novel encoding or produce false positives on benign text discussing prompt injection.",
+            "4. **Audit same-process locking only**: Multi-instance concurrency is secured via process-local threading locks; separate OS processes writing to the same log path require external OS file locking.",
+            "5. **Hash chain has no external anchor for tail truncation detection**: Cryptographic continuity verifies interior consistency; tail truncation or total file deletion requires an external signed checkpoint anchor.",
         ]
     )
 
