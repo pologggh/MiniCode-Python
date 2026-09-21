@@ -30,13 +30,13 @@ _BEARER_PATTERN = re.compile(r"(?i)(bearer\s+)([A-Za-z0-9._~+/-]{10,})")
 
 # API key / Secret assignment pattern
 _SECRET_ASSIGNMENT_PATTERN = re.compile(
-    r"(?P<key>(?:password|secret|token|api_?key|auth|bearer)[\s:=]+)(?P<value>[^\s\"',;]{8,})",
+    r"(?P<key>(?:password|secret|token|api_?key|auth|bearer)[\s:=]+)(?P<value>(?!\[REDACTED)[^\s\"',;]{8,})",
     re.IGNORECASE,
 )
 
 # Environment file line pattern: KEY=VALUE where KEY suggests sensitive material
 _ENV_SECRET_PATTERN = re.compile(
-    r"(?im)^(?P<prefix>\s*[A-Za-z0-9_]*(?:SECRET|KEY|TOKEN|PASSWORD|AUTH|CREDENTIAL|PRIVATE)[A-Za-z0-9_]*\s*=\s*)(?P<val>[^\r\n]+)$"
+    r"(?im)^(?P<prefix>\s*[A-Za-z0-9_]*(?:SECRET|KEY|TOKEN|PASSWORD|AUTH|CREDENTIAL|PRIVATE)[A-Za-z0-9_]*\s*=\s*)(?P<val>(?!\[REDACTED)[^\r\n]+)$"
 )
 
 # Database / Service URI password pattern: scheme://user:password@host
@@ -58,24 +58,21 @@ def redact_text(text: str, max_length: int | None = None) -> str:
     # Second pass: URI passwords (e.g. postgres://user:password@host)
     cleaned = _URI_PASSWORD_PATTERN.sub(r"\g<1>[REDACTED]\g<3>", cleaned)
 
-    # Third pass: Bearer tokens
-    cleaned = _BEARER_PATTERN.sub(r"\g<1>[REDACTED_TOKEN]", cleaned)
-
-
     # Third pass: JWT tokens
     cleaned = _JWT_PATTERN.sub("[REDACTED_TOKEN]", cleaned)
 
-    # Fourth pass: Secret assignments
+    # Fourth pass: Bearer tokens
+    cleaned = _BEARER_PATTERN.sub(r"\g<1>[REDACTED_TOKEN]", cleaned)
+
+    # Fifth pass: Secret assignments
     cleaned = _SECRET_ASSIGNMENT_PATTERN.sub(r"\g<key>[REDACTED]", cleaned)
 
-    # Fifth pass: Environment variable lines
+    # Sixth pass: Environment variable lines
     cleaned = _ENV_SECRET_PATTERN.sub(r"\g<prefix>[REDACTED]", cleaned)
 
-    # Sixth pass: standard release_readiness patterns
-    cleaned = _rr_redact_text(cleaned)
-
-    # Seventh pass: Ensure Bearer tokens are labeled [REDACTED_TOKEN]
-    cleaned = re.sub(r"(?i)\bBearer\s+(\[REDACTED\]|[A-Za-z0-9._~+/-]{8,})", "Bearer [REDACTED_TOKEN]", cleaned)
+    # Seventh pass: Common standalone API key formats
+    cleaned = re.sub(r"\bsk-or-[A-Za-z0-9_-]{8,}\b", "[REDACTED]", cleaned)
+    cleaned = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "[REDACTED]", cleaned)
 
 
     # Optional bounded truncation

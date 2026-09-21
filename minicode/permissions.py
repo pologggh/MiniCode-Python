@@ -217,6 +217,9 @@ class PermissionManager:
         self.session_denied_edits: set[str] = set()
         self.turn_allowed_edits: set[str] = set()
         self.turn_allow_all_edits = False
+        self.turn_allowed_tool_actions: set[tuple[str, str]] = set()
+        self._one_shot_allowed_tool_actions: set[tuple[str, str]] = set()
+        self.session_denied_tool_actions: set[tuple[str, str]] = set()
         self._initialize()
 
     def _initialize(self) -> None:
@@ -231,6 +234,8 @@ class PermissionManager:
     def begin_turn(self) -> None:
         self.turn_allowed_edits.clear()
         self.turn_allow_all_edits = False
+        self.turn_allowed_tool_actions.clear()
+        self._one_shot_allowed_tool_actions.clear()
 
     def end_turn(self) -> None:
         self.begin_turn()
@@ -359,6 +364,11 @@ class PermissionManager:
         if signature in self.session_denied_commands or signature in self.denied_command_patterns:
             raise RuntimeError(f"Command denied: {signature}")
         if signature in self.session_allowed_commands or signature in self.allowed_command_patterns:
+            return
+        if ("run_command", signature) in self._one_shot_allowed_tool_actions:
+            self._one_shot_allowed_tool_actions.discard(("run_command", signature))
+            return
+        if ("run_command", signature) in self.turn_allowed_tool_actions:
             return
 
         
@@ -492,9 +502,12 @@ class PermissionManager:
         details: list[str] | None = None,
     ) -> None:
         """Generic permission gate for tools without native checkpoints (MCP, batch ops, git commit)."""
-        if tool_name in self.session_denied_commands:
-            raise RuntimeError(f"Tool action denied: {tool_name}")
-        if tool_name in self.session_allowed_commands:
+        normalized_scope = (scope or tool_name).strip()
+        key = (tool_name, normalized_scope)
+
+        if key in self.session_denied_tool_actions:
+            raise RuntimeError(f"Tool action denied in session: {tool_name} (scope={normalized_scope})")
+        if key in self.turn_allowed_tool_actions:
             return
 
         if self.prompt is None:
@@ -505,8 +518,8 @@ class PermissionManager:
             {
                 "kind": "tool_action",
                 "summary": summary or f"mini-code wants to run tool '{tool_name}'",
-                "details": details or [f"tool: {tool_name}", f"scope: {scope}"],
-                "scope": scope or tool_name,
+                "details": details or [f"tool: {tool_name}", f"scope: {normalized_scope}"],
+                "scope": normalized_scope,
                 "choices": [
                     {"key": "y", "label": "allow once", "decision": "allow_once"},
                     {"key": "t", "label": "allow in this turn", "decision": "allow_turn"},
@@ -516,13 +529,18 @@ class PermissionManager:
             }
         )
         decision = result.get("decision")
-        if decision in {"allow_once", "allow_turn"}:
-            self.session_allowed_commands.add(tool_name)
+        if decision == "allow_once":
+            self._one_shot_allowed_tool_actions.add(key)
             return
+        if decision == "allow_turn":
+            self.turn_allowed_tool_actions.add(key)
+            return
+        if decision == "deny_once":
+            raise RuntimeError(f"Tool action denied: {tool_name}")
         if decision == "deny_with_feedback":
             feedback = str(result.get("feedback", "")).strip()
             raise RuntimeError(f"Tool action denied: {tool_name}\nUser feedback: {feedback}")
-        self.session_denied_commands.add(tool_name)
+        self.session_denied_tool_actions.add(key)
         raise RuntimeError(f"Tool action denied: {tool_name}")
 
 

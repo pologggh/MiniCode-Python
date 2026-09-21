@@ -18,6 +18,22 @@ import uuid
 from minicode.redaction import redact_payload, redact_text
 
 
+_PATH_LOCKS: dict[Path, threading.Lock] = {}
+_MODULE_LOCK = threading.Lock()
+
+
+def _get_path_lock(path: Path) -> threading.Lock:
+    """Return a shared process-level lock for the resolved path."""
+    try:
+        resolved = path.resolve()
+    except Exception:
+        resolved = path
+    with _MODULE_LOCK:
+        if resolved not in _PATH_LOCKS:
+            _PATH_LOCKS[resolved] = threading.Lock()
+        return _PATH_LOCKS[resolved]
+
+
 @dataclass(slots=True)
 class SecurityAuditEvent:
     event_id: str
@@ -37,6 +53,7 @@ class SecurityAuditEvent:
     output_length: int
     untrusted_output: bool
     injection_detected: bool
+    authorization_outcome: str
     prev_hash: str
     event_hash: str = ""
 
@@ -60,6 +77,7 @@ class SecurityAuditEvent:
             "output_length": self.output_length,
             "untrusted_output": self.untrusted_output,
             "injection_detected": self.injection_detected,
+            "authorization_outcome": self.authorization_outcome,
             "prev_hash": self.prev_hash,
         }
         return json.dumps(data, sort_keys=True, ensure_ascii=False).encode("utf-8")
@@ -86,7 +104,7 @@ class SecurityAuditLog:
             self.log_path = base_dir / "audit.jsonl"
 
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        self._lock = _get_path_lock(self.log_path)
         self._last_hash = self._get_tail_hash()
 
     def _get_tail_hash(self) -> str:
@@ -123,9 +141,13 @@ class SecurityAuditLog:
         output: str = "",
         untrusted_output: bool = False,
         injection_detected: bool = False,
+        authorization_outcome: str = "NOT_REQUIRED",
     ) -> SecurityAuditEvent:
         """Record an audit event with secret redaction and hash chaining."""
         with self._lock:
+            # Re-read tail hash from disk inside lock before computing prev_hash
+            prev_hash = self._get_tail_hash()
+
             # Hash input and output data
             raw_input_str = json.dumps(input_data, default=str, sort_keys=True) if input_data else ""
             input_digest = hashlib.sha256(raw_input_str.encode("utf-8")).hexdigest()
@@ -155,7 +177,8 @@ class SecurityAuditLog:
                 output_length=len(output_str),
                 untrusted_output=untrusted_output,
                 injection_detected=injection_detected,
-                prev_hash=self._last_hash,
+                authorization_outcome=authorization_outcome,
+                prev_hash=prev_hash,
             )
             event.event_hash = event.compute_hash()
             self._last_hash = event.event_hash
@@ -178,7 +201,8 @@ class SecurityAuditLog:
         if not path.exists():
             return True, 0, -1, "Log file does not exist"
 
-        with self._lock:
+        path_lock = _get_path_lock(path)
+        with path_lock:
             events: list[dict[str, Any]] = []
             with open(path, "r", encoding="utf-8") as f:
                 for line in f:
@@ -223,6 +247,7 @@ class SecurityAuditLog:
                         output_length=ev["output_length"],
                         untrusted_output=ev["untrusted_output"],
                         injection_detected=ev["injection_detected"],
+                        authorization_outcome=ev.get("authorization_outcome", "NOT_REQUIRED"),
                         prev_hash=ev["prev_hash"],
                     )
                     recomputed_hash = audit_ev.compute_hash()

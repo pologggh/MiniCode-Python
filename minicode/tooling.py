@@ -382,26 +382,42 @@ class ToolRegistry:
                         metadata={"security_decision": "DENY", "reasons": ["permission_manager_missing"]},
                     )
                     if self.security_audit:
-                        self.security_audit.record_event(
-                            session_id=str(getattr(context, "session", "") or ""),
-                            actor=actor_str,
-                            agent_role=role,
-                            tool_name=tool_name,
-                            decision="DENY",
-                            risk=assessment.risk.value,
-                            rule_ids=["missing_permission_fail_closed"],
-                            reasons=["permission manager missing"],
-                            input_data=parsed,
-                            result_ok=False,
-                            output=fail_closed_res.output,
-                        )
+                        try:
+                            self.security_audit.record_event(
+                                session_id=str(getattr(context, "session", "") or ""),
+                                actor=actor_str,
+                                agent_role=role,
+                                tool_name=tool_name,
+                                decision="DENY",
+                                risk=assessment.risk.value,
+                                rule_ids=["missing_permission_fail_closed"],
+                                reasons=["permission manager missing"],
+                                input_data=parsed,
+                                result_ok=False,
+                                output=fail_closed_res.output,
+                                authorization_outcome="UNAVAILABLE",
+                            )
+                        except Exception as audit_err:
+                            _logger.warning("Audit logging failed: %s", audit_err)
                     return fail_closed_res
 
                 if assessment.decision == SecurityDecision.ASK and assessment.approval_route == ApprovalRoute.GENERIC_TOOL:
+                    if tool_name == "run_command" and isinstance(parsed, dict) and "command" in parsed:
+                        cmd_val = parsed["command"]
+                        args_val = parsed.get("args") or []
+                        if isinstance(cmd_val, list):
+                            action_scope = " ".join(str(c) for c in cmd_val).strip()
+                        elif args_val:
+                            action_scope = f"{cmd_val} {' '.join(str(a) for a in args_val)}".strip()
+                        else:
+                            action_scope = str(cmd_val).strip()
+                    else:
+                        action_scope = str(parsed)[:200]
+
                     try:
                         context.permissions.ensure_tool_action(
                             tool_name=tool_name,
-                            scope=str(parsed)[:200],
+                            scope=action_scope,
                             summary=f"Approval requested for tool '{tool_name}'",
                             details=[f"tool: {tool_name}", f"reasons: {'; '.join(assessment.reasons)}"],
                         )
@@ -412,23 +428,56 @@ class ToolRegistry:
                             metadata={"security_decision": "DENIED", "reasons": [str(perm_err)]},
                         )
                         if self.security_audit:
+                            try:
+                                self.security_audit.record_event(
+                                    session_id=str(getattr(context, "session", "") or ""),
+                                    actor=actor_str,
+                                    agent_role=role,
+                                    tool_name=tool_name,
+                                    decision="ASK",
+                                    risk=assessment.risk.value,
+                                    rule_ids=assessment.rule_ids,
+                                    reasons=[str(perm_err)],
+                                    input_data=parsed,
+                                    result_ok=False,
+                                    output=perm_denied_res.output,
+                                    authorization_outcome="DENIED",
+                                )
+                            except Exception as audit_err:
+                                _logger.warning("Audit logging failed: %s", audit_err)
+                        return perm_denied_res
+
+            # Phase 2: Execution (with crash protection and native permission denial interception)
+            try:
+                result = tool.run(parsed, context)
+            except RuntimeError as perm_err:
+                err_str = str(perm_err)
+                if any(kw in err_str.lower() for kw in ("denied", "permission", "rejected", "blocked", "forbidden")):
+                    perm_denied_res = ToolResult(
+                        ok=False,
+                        output=f"Tool execution denied: {err_str}",
+                        metadata={"security_decision": "DENIED", "reasons": [err_str]},
+                    )
+                    if self.security_audit:
+                        try:
                             self.security_audit.record_event(
                                 session_id=str(getattr(context, "session", "") or ""),
                                 actor=actor_str,
                                 agent_role=role,
                                 tool_name=tool_name,
-                                decision="ASK",
-                                risk=assessment.risk.value,
-                                rule_ids=assessment.rule_ids,
-                                reasons=[str(perm_err)],
+                                decision=assessment.decision.value if assessment else "ASK",
+                                risk=assessment.risk.value if assessment else "MEDIUM",
+                                rule_ids=assessment.rule_ids if assessment else [],
+                                reasons=[err_str],
                                 input_data=parsed,
                                 result_ok=False,
                                 output=perm_denied_res.output,
+                                authorization_outcome="DENIED",
                             )
-                        return perm_denied_res
-
-            # Phase 2: Execution (with crash protection)
-            result = tool.run(parsed, context)
+                        except Exception as audit_err:
+                            _logger.warning("Audit logging failed: %s", audit_err)
+                    return perm_denied_res
+                raise
 
             # Phase 3: Output sanitization & post-execution security inspection
             if result.output is None:
@@ -457,23 +506,31 @@ class ToolRegistry:
                     if self.security_policy:
                         self.security_policy.metrics.injection_detections += 1
 
-            # Record audit event
+            # Record audit event (with non-blocking degradation)
             if self.security_audit:
-                self.security_audit.record_event(
-                    session_id=str(getattr(context, "session", "") or ""),
-                    actor=actor_str,
-                    agent_role=role,
-                    tool_name=tool_name,
-                    decision=assessment.decision.value if assessment else "ALLOW",
-                    risk=assessment.risk.value if assessment else "SAFE",
-                    rule_ids=assessment.rule_ids if assessment else [],
-                    reasons=assessment.reasons if assessment else [],
-                    input_data=parsed,
-                    result_ok=bool(result.ok),
-                    output=result.output,
-                    untrusted_output=bool(assessment.is_external) if assessment else False,
-                    injection_detected=bool(result.metadata.get("injection_detected", False)),
-                )
+                try:
+                    auth_outcome = (
+                        "APPROVED" if (assessment and assessment.decision == SecurityDecision.ASK)
+                        else "NOT_REQUIRED"
+                    )
+                    self.security_audit.record_event(
+                        session_id=str(getattr(context, "session", "") or ""),
+                        actor=actor_str,
+                        agent_role=role,
+                        tool_name=tool_name,
+                        decision=assessment.decision.value if assessment else "ALLOW",
+                        risk=assessment.risk.value if assessment else "SAFE",
+                        rule_ids=assessment.rule_ids if assessment else [],
+                        reasons=assessment.reasons if assessment else [],
+                        input_data=parsed,
+                        result_ok=bool(result.ok),
+                        output=result.output,
+                        untrusted_output=bool(assessment.is_external) if assessment else False,
+                        injection_detected=bool(result.metadata.get("injection_detected", False)),
+                        authorization_outcome=auth_outcome,
+                    )
+                except Exception as audit_err:
+                    _logger.warning("Audit logging failed post-execution: %s", audit_err)
 
             # Smart truncation for large outputs
             if result.output and len(result.output) > _LARGE_OUTPUT_THRESHOLD:
@@ -502,6 +559,25 @@ class ToolRegistry:
             # Include last 5 lines of traceback for debugging
             tb_excerpt = "".join(tb_lines[-5:]).strip()
             error_type = type(error).__name__
+
+            if self.security_audit:
+                try:
+                    self.security_audit.record_event(
+                        session_id=str(getattr(context, "session", "") or ""),
+                        actor=actor_str,
+                        agent_role=role,
+                        tool_name=tool_name,
+                        decision=assessment.decision.value if assessment else "ALLOW",
+                        risk=assessment.risk.value if assessment else "MEDIUM",
+                        rule_ids=assessment.rule_ids if assessment else [],
+                        reasons=[str(error)],
+                        input_data=parsed,
+                        result_ok=False,
+                        output=f"[{error_type}] Tool {tool_name} crashed: {error}",
+                        authorization_outcome="TOOL_EXCEPTION",
+                    )
+                except Exception:
+                    pass
 
             return ToolResult(
                 ok=False,
