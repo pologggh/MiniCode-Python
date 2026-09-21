@@ -125,3 +125,48 @@ def test_sensitive_file_read_redaction(tmp_path):
     assert "sk-test-12345678" not in res.output
     assert "supersecretpass" not in res.output
     assert "[REDACTED]" in res.output
+
+
+def test_child_agent_mcp_access_denied(tmp_path):
+    mcp_tool = ToolDefinition(
+        name="mcp__github__create_repo",
+        description="Create github repo",
+        input_schema={"type": "object"},
+        validator=lambda x: x,
+        run=lambda inp, ctx: ToolResult(ok=True, output="Created"),
+    )
+    policy = SecurityPolicyEngine()
+    registry = ToolRegistry([mcp_tool], security_policy=policy)
+
+    child_context = ToolContext(
+        cwd=str(tmp_path),
+        _runtime={"_security_actor": "CHILD", "_security_role": "coder", "_security_depth": 1},
+    )
+    res = registry.execute("mcp__github__create_repo", {}, child_context)
+
+    assert res.ok is False
+    assert "Security policy denied" in res.output
+    assert "child_mcp_denied" in res.metadata.get("rule_ids", [])
+
+
+def test_child_researcher_write_denied(tmp_path):
+    write_tool = ToolDefinition(
+        name="write_file",
+        description="Write file",
+        input_schema={"type": "object"},
+        validator=lambda x: x,
+        run=lambda inp, ctx: ToolResult(ok=True, output="Written"),
+    )
+    policy = SecurityPolicyEngine()
+    registry = ToolRegistry([write_tool], security_policy=policy)
+
+    child_context = ToolContext(
+        cwd=str(tmp_path),
+        _runtime={"_security_actor": "CHILD", "_security_role": "researcher", "_security_depth": 1},
+    )
+    res = registry.execute("write_file", {"path": "test.txt", "content": "hello"}, child_context)
+
+    assert res.ok is False
+    assert "Security policy denied" in res.output
+    assert "child_role_write_denied" in res.metadata.get("rule_ids", [])
+

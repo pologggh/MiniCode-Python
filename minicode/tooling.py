@@ -357,7 +357,7 @@ class ToolRegistry:
                     denial_res = ToolResult(
                         ok=False,
                         output=f"Security policy denied tool '{tool_name}': {reason_msg}",
-                        metadata={"security_decision": "DENY", "reasons": assessment.reasons},
+                        metadata={"security_decision": "DENY", "reasons": assessment.reasons, "rule_ids": assessment.rule_ids},
                     )
                     if self.security_audit:
                         self.security_audit.record_event(

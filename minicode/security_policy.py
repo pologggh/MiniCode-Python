@@ -258,7 +258,7 @@ class SecurityPolicyEngine:
 
             # Role-specific containment
             child_role = request.agent_role.lower()
-            if child_role in {"research", "test", "reviewer"}:
+            if child_role in {"research", "researcher", "test", "tester", "reviewer", "code_reviewer", "readonly"} or any(r in child_role for r in ("research", "test", "review", "read")):
                 if category in {
                     ToolCategory.LOCAL_WRITE,
                     ToolCategory.DESTRUCTIVE_LOCAL,
