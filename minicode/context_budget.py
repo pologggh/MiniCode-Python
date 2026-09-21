@@ -160,6 +160,18 @@ _ERROR_PATTERNS = (
     re.compile(r"\bFAILED\s+[^\n]+::", re.IGNORECASE),
 )
 
+_TEST_PASS_PATTERNS = (
+    re.compile(r"\b\d+\s+passed\b", re.IGNORECASE),
+    re.compile(r"\bpassed in\b", re.IGNORECASE),
+    re.compile(r"\bPASSED\b"),
+)
+
+_TEST_FAIL_PATTERNS = (
+    re.compile(r"\b\d+\s+failed\b", re.IGNORECASE),
+    re.compile(r"\bFAILED\b"),
+    re.compile(r"\b(?:failures?|errors?):\b", re.IGNORECASE),
+)
+
 # Natural language and explicit constraint detection patterns
 _CONSTRAINT_PATTERNS = (
     re.compile(r"\b(?:critical\s+)?constraints?:", re.IGNORECASE),
@@ -382,28 +394,72 @@ class ContextBudgetManager:
 
         active_files = active_files or set()
 
-        # Pre-scan for latest verification and latest error
+        # Pre-scan for latest verification and latest unresolved error
         latest_verification_idx = -1
-        latest_error_idx = -1
         active_task_idx = -1
 
+        # Track error records: (index, is_test_error, tool_name)
+        error_records: list[tuple[int, bool, str]] = []
+        # Track test pass indices
+        test_pass_indices: list[int] = []
+        # Track successful tool executions: (index, tool_name)
+        tool_success_indices: list[tuple[int, str]] = []
+
         for i, msg in enumerate(messages):
-            role = msg.get("role", "")
+            role = str(msg.get("role", "")).lower()
             content = str(msg.get("content", "") or "")
-            tool_name = str(msg.get("toolName", "") or "")
+            tool_name = str(msg.get("toolName", "") or "").lower()
+            is_err = bool(msg.get("isError", False))
 
             if role == "user":
                 active_task_idx = i
 
             # Check verification
-            if role in ("tool", "tool_result") or tool_name in ("test_runner", "pytest", "run_command"):
-                if any(p.search(content) for p in _TEST_FRAMEWORK_PATTERNS) or "pytest" in tool_name:
-                    latest_verification_idx = i
+            is_verif = (
+                role in ("tool", "tool_result")
+                or tool_name in ("test_runner", "pytest", "run_command")
+            ) and (any(p.search(content) for p in _TEST_FRAMEWORK_PATTERNS) or "pytest" in tool_name)
 
-            # Check error
-            is_err = msg.get("isError") is True
-            if is_err or (role in ("tool", "tool_result") and any(p.search(content) for p in _ERROR_PATTERNS)):
-                latest_error_idx = i
+            if is_verif:
+                latest_verification_idx = i
+                has_fail = (
+                    is_err
+                    or any(p.search(content) for p in _TEST_FAIL_PATTERNS)
+                    or any(p.search(content) for p in _ERROR_PATTERNS)
+                )
+                has_pass = any(p.search(content) for p in _TEST_PASS_PATTERNS)
+                if has_pass and not has_fail:
+                    test_pass_indices.append(i)
+
+            # Check error vs success
+            has_error = (
+                is_err
+                or (role in ("tool", "tool_result") and any(p.search(content) for p in _ERROR_PATTERNS))
+                or any(p.search(content) for p in _TEST_FAIL_PATTERNS)
+            )
+            if has_error:
+                error_records.append((i, is_verif, tool_name))
+            elif role in ("tool", "tool_result"):
+                tool_success_indices.append((i, tool_name))
+
+        # Determine which errors are unresolved
+        latest_error_idx = -1
+        unresolved_error_indices: list[int] = []
+
+        for err_idx, is_test_err, t_name in error_records:
+            if is_test_err:
+                # Test error is resolved if a subsequent test verification passed
+                if any(pass_idx > err_idx for pass_idx in test_pass_indices):
+                    continue
+                unresolved_error_indices.append(err_idx)
+            else:
+                # Generic tool error is resolved if the same tool succeeded later
+                if any(succ_idx > err_idx and (not t_name or succ_tool == t_name) for succ_idx, succ_tool in tool_success_indices):
+                    continue
+                unresolved_error_indices.append(err_idx)
+
+        if unresolved_error_indices:
+            latest_error_idx = max(unresolved_error_indices)
 
         items: list[ContextItem] = []
         for i, msg in enumerate(messages):
@@ -553,7 +609,12 @@ class ContextBudgetManager:
         if (role in ("tool", "tool_result") and is_test_evidence) or index == latest_verification_index:
             is_latest = (index == latest_verification_index)
             is_large = estimated_tokens >= self.config.offload_threshold_tokens
-            reasons.append("latest_verification" if is_latest else "earlier_verification")
+            if is_latest:
+                reasons.append("latest_verification")
+                if is_error or any(p.search(content) for p in _ERROR_PATTERNS) or any(p.search(content) for p in _TEST_FAIL_PATTERNS):
+                    reasons.append("unresolved_verification_failure")
+            else:
+                reasons.append("earlier_verification")
             return ContextItem(
                 item_id=item_id,
                 message_index=index,
@@ -693,9 +754,11 @@ class ContextBudgetManager:
         model: str | None = None,
         available_budget: int | None = None,
         active_files: set[str] | None = None,
+        metrics: ContextBudgetMetrics | None = None,
     ) -> ContextBudgetPlan:
         """Formulate deterministic budget plan based on model context window."""
-        self.metrics.plans_created += 1
+        active_metrics = metrics or self.metrics
+        active_metrics.plans_created += 1
 
         mcw = get_model_context_window(model or "default")
         budget = available_budget
@@ -704,7 +767,7 @@ class ContextBudgetManager:
 
         items = self.classify_all(messages, active_files=active_files)
         tokens_before = sum(item.estimated_tokens for item in items)
-        self.metrics.tokens_before += tokens_before
+        active_metrics.tokens_before += tokens_before
 
         decisions: list[ContextDecision] = []
         tokens_to_free = max(0, tokens_before - budget)
@@ -840,7 +903,7 @@ class ContextBudgetManager:
                 continue
 
             # 4. If still over budget and item is not protected, evict low-priority conversation/tool results
-            if current_estimate > available_budget and not item.protected and item.zone in (
+            if current_estimate > budget and not item.protected and item.zone in (
                 ContextZone.CONVERSATION,
                 ContextZone.TOOL_EVIDENCE,
                 ContextZone.MEMORY,
@@ -1067,17 +1130,19 @@ class ContextBudgetManager:
         active_files: set[str] | None = None,
     ) -> tuple[list[dict[str, Any]], ContextBudgetPlan]:
         """Single entrypoint to plan and apply context budget before a model step."""
+        active_metrics = metrics or self.metrics
         plan = self.plan(
             messages,
             model=model,
             available_budget=available_budget,
             active_files=active_files,
+            metrics=active_metrics,
         )
         modified, _ = self.apply(
             messages,
             plan=plan,
             artifact_store=artifact_store,
             compactor=compactor,
-            metrics=metrics or self.metrics,
+            metrics=active_metrics,
         )
         return modified, plan

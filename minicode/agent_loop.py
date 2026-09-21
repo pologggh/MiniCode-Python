@@ -913,7 +913,7 @@ def run_agent_turn(
 ) -> list[ChatMessage]:
     # Prelude: prepare per-turn state before we enter the recurrent think/act loop.
     current_messages = list(messages)
-    runtime = runtime or {}
+    runtime = runtime if runtime is not None else {}
     configured_runtime_model = (
         str(runtime.get("configuredModel", "")).strip()
         or str(runtime.get("model", "")).strip()
@@ -1155,12 +1155,24 @@ def run_agent_turn(
     compaction_breaker: CompactionCircuitBreaker | None = CompactionCircuitBreaker()
     cost_control: CostControlLoop | None = None
     context_artifact_store: ContextArtifactStore = ContextArtifactStore(cwd)
+    active_artifact_ids: set[str] = set()
+    for msg in current_messages:
+        art_id = msg.get("_context_artifact_id")
+        if art_id:
+            active_artifact_ids.add(str(art_id))
+        content = str(msg.get("content") or "")
+        if "[Context Artifact]" in content and "id: ctx_" in content:
+            import re
+            m = re.search(r"id:\s*(ctx_[a-zA-Z0-9_\-]+)", content)
+            if m:
+                active_artifact_ids.add(m.group(1))
     try:
-        context_artifact_store.cleanup(retention_days=7, max_artifacts=500)
+        context_artifact_store.cleanup(retention_days=7, max_artifacts=500, active_artifact_ids=active_artifact_ids)
     except Exception:
         pass
     context_budget_manager: ContextBudgetManager = ContextBudgetManager(workspace=cwd)
     context_budget_metrics: ContextBudgetMetrics = ContextBudgetMetrics()
+    runtime["contextBudgetMetrics"] = context_budget_metrics
     active_execution_trace = ExecutionTrace()
     turn_injected_memories: list[InjectedMemory] = []
 

@@ -67,13 +67,27 @@ class ContextArtifactStore:
     ):
         self._workspace = Path(workspace).resolve() if workspace else Path.cwd().resolve()
         self._store_dir = (self._workspace / store_dir_name).resolve()
+        if self._store_dir.exists() or self._store_dir.is_symlink():
+            self._validate_store_root_containment()
 
     @property
     def store_dir(self) -> Path:
         return self._store_dir
 
+    def _validate_store_root_containment(self) -> None:
+        """Validate that the store directory root is strictly contained within workspace."""
+        resolved_workspace = Path(os.path.realpath(self._workspace)).resolve()
+        resolved_store = Path(os.path.realpath(self._store_dir)).resolve()
+        if not resolved_store.is_relative_to(resolved_workspace):
+            raise ValueError(
+                f"Artifact store directory '{self._store_dir}' points outside workspace '{self._workspace}'"
+            )
+
     def _ensure_dir(self) -> None:
+        if self._store_dir.exists() or self._store_dir.is_symlink():
+            self._validate_store_root_containment()
         self._store_dir.mkdir(parents=True, exist_ok=True)
+        self._validate_store_root_containment()
 
     def _validate_artifact_id(self, artifact_id: str) -> str:
         """Validate artifact ID format and prevent path traversal."""
@@ -209,6 +223,8 @@ class ContextArtifactStore:
                 return None
             with open(content_path, "r", encoding="utf-8", newline="") as f:
                 return f.read()
+        except ValueError:
+            raise
         except Exception as exc:
             logger.warning("Failed to read artifact %s: %s", artifact_id, exc)
             return None
@@ -239,6 +255,8 @@ class ContextArtifactStore:
                 content = f.read(bounded_limit)
 
             return content, meta
+        except ValueError:
+            raise
         except Exception as exc:
             logger.warning("Failed to read range for artifact %s: %s", artifact_id, exc)
             return None, None
@@ -249,6 +267,8 @@ class ContextArtifactStore:
             clean_id = self._validate_artifact_id(artifact_id)
             content_path, _ = self._get_paths(clean_id)
             return content_path.is_file()
+        except ValueError:
+            raise
         except Exception:
             return False
 
@@ -261,6 +281,8 @@ class ContextArtifactStore:
         """Clean old artifacts without deleting currently referenced active artifacts."""
         if not self._store_dir.exists():
             return 0
+
+        self._validate_store_root_containment()
 
         active_set = active_artifact_ids or set()
         cutoff = time.time() - (retention_days * 86400)

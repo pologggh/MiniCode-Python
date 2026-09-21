@@ -51,7 +51,13 @@ def create_load_context_artifact_tool(
         offset = input_data.get("offset", 0)
         limit = input_data.get("limit", 4000)
 
-        active_metrics = metrics or getattr(_context, "context_budget_metrics", None) or getattr(_context, "metrics", None)
+        runtime_dict = getattr(_context, "_runtime", None) or {}
+        active_metrics = (
+            metrics
+            or runtime_dict.get("contextBudgetMetrics")
+            or getattr(_context, "context_budget_metrics", None)
+            or getattr(_context, "metrics", None)
+        )
 
         try:
             content, meta = artifact_store.read_range(
