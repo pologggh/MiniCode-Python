@@ -289,50 +289,170 @@ class WorktreeIsolator:
     """Creates temporary git worktrees for risky task execution.
 
     Provides isolation so that exploratory or destructive operations
-    don't affect the main working directory.
+    don't affect the main working directory. Includes patch extraction,
+    dry-run verification, and gated application.
     """
 
     def __init__(self, base_path: Path, prefix: str = "isolated_task") -> None:
-        self.base_path = base_path
+        self.base_path = Path(base_path).resolve()
         self.prefix = prefix
         self.active_worktrees: list[Path] = []
+        self._created_branches: dict[Path, str] = {}
 
-    def create_worktree(self, task_id: str) -> Path:
+    def is_git_repository(self) -> bool:
+        """Check if base_path is within a valid git working tree."""
+        import subprocess
+        try:
+            res = subprocess.run(
+                ["git", "rev-parse", "--is-inside-work-tree"],
+                cwd=str(self.base_path),
+                capture_output=True,
+                text=True,
+                timeout=5.0,
+            )
+            return res.returncode == 0 and res.stdout.strip() == "true"
+        except Exception:
+            return False
+
+    def create_worktree(self, task_id: str) -> Path | None:
         """Create a new worktree for the given task."""
         import subprocess
 
-        worktree_path = self.base_path / f"{self.prefix}_{task_id}"
-        worktree_path.mkdir(parents=True, exist_ok=True)
+        if not self.is_git_repository():
+            return None
 
-        # Create a new orphan branch for isolation
-        branch_name = f"{self.prefix}_{task_id}"
-        subprocess.run(
-            ["git", "worktree", "add", "-b", branch_name, str(worktree_path), "--detach"],
-            capture_output=True,
-            text=True,
-        )
+        clean_id = "".join(c for c in task_id if c.isalnum() or c in ("-", "_"))[:32]
+        timestamp = int(time.time() * 1000) % 1000000
+        branch_name = f"{self.prefix}_{clean_id}_{timestamp}"
+        worktree_path = self.base_path / ".worktrees" / branch_name
 
-        self.active_worktrees.append(worktree_path)
-        return worktree_path
+        try:
+            worktree_path.parent.mkdir(parents=True, exist_ok=True)
+            res = subprocess.run(
+                ["git", "worktree", "add", "-b", branch_name, str(worktree_path)],
+                cwd=str(self.base_path),
+                capture_output=True,
+                text=True,
+                timeout=15.0,
+            )
+            if res.returncode != 0:
+                return None
+
+            self.active_worktrees.append(worktree_path)
+            self._created_branches[worktree_path] = branch_name
+            return worktree_path
+        except Exception:
+            return None
+
+    def generate_patch(self, worktree_path: Path) -> str:
+        """Generate git unified diff of changes made in the worktree."""
+        import subprocess
+        if not worktree_path.exists():
+            return ""
+
+        try:
+            subprocess.run(
+                ["git", "add", "-N", "."],
+                cwd=str(worktree_path),
+                capture_output=True,
+                text=True,
+                timeout=5.0,
+            )
+            res = subprocess.run(
+                ["git", "diff", "HEAD"],
+                cwd=str(worktree_path),
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+            )
+            return res.stdout if res.returncode == 0 else ""
+        except Exception:
+            return ""
+
+    def verify_patch(self, patch_content: str) -> bool:
+        """Dry-run check if patch applies cleanly to base_path without conflicts."""
+        import subprocess
+        if not patch_content or not patch_content.strip():
+            return True
+
+        try:
+            res = subprocess.run(
+                ["git", "apply", "--check"],
+                cwd=str(self.base_path),
+                input=patch_content,
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+            )
+            return res.returncode == 0
+        except Exception:
+            return False
+
+    def apply_patch(self, patch_content: str, permissions: Any | None = None) -> bool:
+        """Apply patch to base_path, gated by permissions if present."""
+        import subprocess
+        if not patch_content or not patch_content.strip():
+            return True
+
+        if permissions and hasattr(permissions, "prompt") and permissions.prompt:
+            try:
+                decision = permissions.prompt({
+                    "action": "apply_worktree_patch",
+                    "patch_length": len(patch_content),
+                    "base_path": str(self.base_path),
+                })
+                if isinstance(decision, dict) and decision.get("action") == "deny":
+                    return False
+            except Exception:
+                pass
+
+        try:
+            res = subprocess.run(
+                ["git", "apply"],
+                cwd=str(self.base_path),
+                input=patch_content,
+                capture_output=True,
+                text=True,
+                timeout=15.0,
+            )
+            return res.returncode == 0
+        except Exception:
+            return False
 
     def cleanup_worktree(self, worktree_path: Path) -> None:
-        """Remove a worktree and its directory."""
+        """Remove a worktree and its associated branch."""
         import subprocess
+        import shutil
+
+        branch_name = self._created_branches.get(worktree_path)
 
         try:
             subprocess.run(
                 ["git", "worktree", "remove", "-f", str(worktree_path)],
+                cwd=str(self.base_path),
                 capture_output=True,
                 text=True,
+                timeout=10.0,
             )
         except Exception:
-            pass  # Best effort cleanup
+            pass
 
-        # Remove directory if it still exists
-        if worktree_path.exists():
-            import shutil
+        if branch_name:
             try:
-                shutil.rmtree(worktree_path)
+                subprocess.run(
+                    ["git", "branch", "-D", branch_name],
+                    cwd=str(self.base_path),
+                    capture_output=True,
+                    text=True,
+                    timeout=5.0,
+                )
+            except Exception:
+                pass
+            self._created_branches.pop(worktree_path, None)
+
+        if worktree_path.exists():
+            try:
+                shutil.rmtree(worktree_path, ignore_errors=True)
             except Exception:
                 pass
 
@@ -343,6 +463,7 @@ class WorktreeIsolator:
         """Remove all active worktrees."""
         for wt in list(self.active_worktrees):
             self.cleanup_worktree(wt)
+
 
 
 # ---------------------------------------------------------------------------

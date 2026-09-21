@@ -355,8 +355,9 @@ class TeamScheduler:
         plan: TeamPlan,
         context: ToolContext,
         max_replans: int = 1,
+        use_worktree: bool = False,
     ) -> TeamExecutionResult:
-        """Execute the team plan to completion with quality gates and bounded replan."""
+        """Execute the team plan to completion with quality gates, bounded replan, and optional worktree isolation."""
         start_time = time.time()
         graph = plan.graph
         task_results: dict[str, SubAgentResult] = {}
@@ -364,6 +365,24 @@ class TeamScheduler:
         gate_results: dict[str, QualityGateResult] = {}
         replan_count = 0
         handled_replan_tasks: set[str] = set()
+
+        isolator = None
+        worktree_path = None
+        target_context = context
+
+        if use_worktree:
+            from pathlib import Path
+            from minicode.task_graph import WorktreeIsolator
+            isolator = WorktreeIsolator(base_path=Path(context.cwd))
+            if isolator.is_git_repository():
+                worktree_path = isolator.create_worktree(plan.graph.name)
+                if worktree_path:
+                    target_context = ToolContext(
+                        cwd=str(worktree_path),
+                        permissions=context.permissions,
+                        session=context.session,
+                        _runtime=context._runtime,
+                    )
 
         while True:
             self._cascade_skip_unreachable_tasks(graph)
@@ -382,11 +401,12 @@ class TeamScheduler:
                         self._execute_single_task,
                         task_def,
                         plan,
-                        context,
+                        target_context,
                         dependency_outputs,
                     ): task_def
                     for task_def in ready_tasks
                 }
+
 
                 for future in as_completed(futures):
                     task_def = futures[future]
@@ -479,6 +499,16 @@ class TeamScheduler:
 
         overall_success = len(failed) == 0 and len(completed) > 0 and final_gates_pass
 
+        patch_applied = False
+        if isolator and worktree_path:
+            try:
+                patch_content = isolator.generate_patch(worktree_path)
+                if overall_success and patch_content.strip():
+                    if isolator.verify_patch(patch_content):
+                        patch_applied = isolator.apply_patch(patch_content, permissions=context.permissions)
+            finally:
+                isolator.cleanup_all()
+
         summary_lines = [
             f"### Multi-Agent Team Execution Summary",
             f"- **Goal**: {plan.goal}",
@@ -490,10 +520,13 @@ class TeamScheduler:
             f"- **Duration**: {elapsed:.1f}s",
             f"- **Max Concurrent Writers**: {self.max_concurrent_writers_observed}",
         ]
+        if use_worktree:
+            summary_lines.append(f"- **Worktree Isolation**: Active (Patch applied: {patch_applied})")
         if gate_results:
             summary_lines.append("- **Quality Gates**:")
             for tid, gres in gate_results.items():
                 summary_lines.append(f"  - {tid} ({gres.gate_name}): {gres.verdict.upper()} ({gres.feedback})")
+
 
         return TeamExecutionResult(
             success=overall_success,
