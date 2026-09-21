@@ -1,0 +1,156 @@
+{
+  "benchmark": "Phase 4 Centralized Multi-Agent Orchestration",
+  "timestamp": "2026-09-21 10:17:14",
+  "all_cases_passed": true,
+  "total_cases": 12,
+  "passed_cases": 12,
+  "metrics": {
+    "dag_planning_validity_rate": 1.0,
+    "role_tool_conformance_rate": 1.0,
+    "depth_limit_violation_rate": 0.0,
+    "child_mcp_leakage_rate": 0.0,
+    "parallel_speedup_factor": 1.96,
+    "writer_concurrency_violations": 0,
+    "test_gate_accuracy": 1.0,
+    "review_gate_parsing_accuracy": 1.0,
+    "replan_boundedness_rate": 1.0,
+    "child_crash_containment_rate": 1.0,
+    "downstream_skip_rate": 1.0,
+    "worktree_cleanup_rate": 1.0,
+    "patch_verification_accuracy": 1.0,
+    "parent_loop_integrity_rate": 1.0
+  },
+  "cases": [
+    {
+      "case_id": "case_1",
+      "name": "Single Agent Baseline",
+      "passed": true,
+      "metrics": {
+        "turns": 1,
+        "tool_calls": 0,
+        "ok": true
+      },
+      "details": "Verified single-agent backward compatibility via SubAgentRunner."
+    },
+    {
+      "case_id": "case_2",
+      "name": "Team DAG Planning & Topology",
+      "passed": true,
+      "metrics": {
+        "dag_valid": true,
+        "node_count": 5,
+        "root_parallel_tasks": 2
+      },
+      "details": "Standard 5-node canonical software engineering DAG verified."
+    },
+    {
+      "case_id": "case_3",
+      "name": "Parallel Read Concurrency",
+      "passed": true,
+      "metrics": {
+        "sequential_time_s": 0.161,
+        "parallel_time_s": 0.082,
+        "speedup_factor": 1.96
+      },
+      "details": "Parallel read speedup factor: 1.96x (sequential: 0.161s, parallel: 0.082s)"
+    },
+    {
+      "case_id": "case_4",
+      "name": "Writer Serialization",
+      "passed": true,
+      "metrics": {
+        "max_concurrent_writers": 1,
+        "violations": 0
+      },
+      "details": "Max concurrent writers observed: 1 (strict mutex lock holds <= 1)."
+    },
+    {
+      "case_id": "case_5",
+      "name": "Strict Test Gate Verification",
+      "passed": true,
+      "metrics": {
+        "pass_accuracy": 1.0,
+        "caught_failure": true,
+        "blocked_hollow_claim": true
+      },
+      "details": "Verified test runner execution required; hollow claims and real failures rejected."
+    },
+    {
+      "case_id": "case_6",
+      "name": "Test Gate Replan Recovery",
+      "passed": true,
+      "metrics": {
+        "replan_count": 1,
+        "recovered": true
+      },
+      "details": "Test gate failure triggered replan 1; corrective coding + test passed and finished successfully."
+    },
+    {
+      "case_id": "case_7",
+      "name": "Review Gate Structured Approval",
+      "passed": true,
+      "metrics": {
+        "approved": true,
+        "verdict": "approved"
+      },
+      "details": "Parsed structured JSON verdict approve with comments."
+    },
+    {
+      "case_id": "case_8",
+      "name": "Review Gate Rejection Replan",
+      "passed": true,
+      "metrics": {
+        "replan_count": 1,
+        "rejection_handled": true
+      },
+      "details": "Review gate rejection initiated replan 1; reviewer approved on second pass."
+    },
+    {
+      "case_id": "case_9",
+      "name": "Depth Limit & Tool Stripping",
+      "passed": true,
+      "metrics": {
+        "depth_limit_enforced": true,
+        "forbidden_tools_stripped": true,
+        "forbidden_list": [
+          "agent_team",
+          "task"
+        ]
+      },
+      "details": "Depth limit >= 1 rejected; task and agent_team stripped from child tool registry."
+    },
+    {
+      "case_id": "case_10",
+      "name": "Child MCP Isolation",
+      "passed": true,
+      "metrics": {
+        "mcp_servers_empty": true,
+        "leakage": 0
+      },
+      "details": "Child runtime mcpServers cleared to prevent inheriting parent external connections."
+    },
+    {
+      "case_id": "case_11",
+      "name": "Child Crash Containment",
+      "passed": true,
+      "metrics": {
+        "containment_successful": true,
+        "failed_tasks": 1,
+        "skipped_tasks": 3
+      },
+      "details": "Sub-agent exception caught safely; dependent tasks skipped cleanly."
+    },
+    {
+      "case_id": "case_12",
+      "name": "Worktree Isolation Lifecycle",
+      "passed": true,
+      "metrics": {
+        "worktree_created": true,
+        "patch_generated": true,
+        "patch_verified": true,
+        "cleaned_up": true
+      },
+      "details": "Created worktree, created file, generated diff, dry-run verified patch, and cleaned up."
+    }
+  ]
+}
