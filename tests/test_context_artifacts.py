@@ -160,3 +160,47 @@ def test_context_budget_apply_with_artifact_store(tmp_path: Path):
     recovered = tool.run({"artifact_id": artifact_id}, None)
     assert recovered.ok is True
     assert "Log output line from test runner" in recovered.output
+
+
+def test_artifact_symlink_escape_rejection(tmp_path: Path):
+    store = ContextArtifactStore(workspace=tmp_path)
+    store_dir = tmp_path / ".mini-code-tool-results"
+    store_dir.mkdir(parents=True, exist_ok=True)
+
+    # Sibling file outside store dir
+    sibling_file = tmp_path / "sibling_secret.txt"
+    sibling_file.write_text("SUPER_SECRET_EXTERNAL_CONTENT", encoding="utf-8")
+
+    symlink_target_id = "ctx_1111222233334444"
+    symlink_path = store_dir / f"{symlink_target_id}.txt"
+
+    try:
+        symlink_path.symlink_to(sibling_file)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"Symlinks not supported in this test environment: {exc}")
+
+    # Access must be rejected by Path containment check
+    with pytest.raises(ValueError, match="Symlink escape attempt detected"):
+        store.read(symlink_target_id)
+
+
+def test_load_context_artifact_metrics_wiring(tmp_path: Path):
+    from minicode.context_budget import ContextBudgetMetrics
+
+    store = ContextArtifactStore(workspace=tmp_path)
+    meta = store.persist("Traced exception line", tool_name="pytest")
+    metrics = ContextBudgetMetrics()
+
+    tool = create_load_context_artifact_tool(str(tmp_path), store=store, metrics=metrics)
+
+    # Success increments artifact_recovery_count
+    res1 = tool.run({"artifact_id": meta.artifact_id}, None)
+    assert res1.ok is True
+    assert metrics.artifact_recovery_count == 1
+    assert metrics.recovery_failures == 0
+
+    # Failure increments recovery_failures
+    res2 = tool.run({"artifact_id": "ctx_nonexistent12345"}, None)
+    assert res2.ok is False
+    assert metrics.artifact_recovery_count == 1
+    assert metrics.recovery_failures == 1

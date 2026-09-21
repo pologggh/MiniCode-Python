@@ -278,3 +278,159 @@ def test_active_file_boost():
     score_boosted = mgr.score_importance(item, active_files={"minicode/agent_loop.py"}, total_messages=10)
     assert score_boosted > score_normal
     assert "active_file_boost:minicode/agent_loop.py" in item.reasons
+
+
+def test_natural_language_constraints():
+    mgr = ContextBudgetManager()
+    constraints = [
+        "Do not modify database migrations.",
+        "Never edit files under auth/.",
+        "Use only Python standard library.",
+        "You must not run destructive git commands.",
+        "Keep the public API backward compatible.",
+        "CRITICAL CONSTRAINT: No external requests.",
+    ]
+    for c in constraints:
+        messages = [
+            {"role": "system", "content": "You are assistant."},
+            {"role": "user", "content": c},
+            {"role": "assistant", "content": "Acknowledged."},
+            {"role": "user", "content": "Next step."},
+        ]
+        items = mgr.classify_all(messages)
+        # Message index 1 should be recognized as constraint
+        assert items[1].zone == ContextZone.CRITICAL, f"Failed on: {c}"
+        assert items[1].protected is True, f"Failed on: {c}"
+        assert items[1].source == "constraint", f"Failed on: {c}"
+
+
+def test_rich_compact_preview_preserves_salient_lines():
+    from minicode.context_budget import build_compact_preview
+
+    # Test error extraction
+    pytest_err = (
+        "=================== test session starts ===================\n"
+        "tests/test_a.py .\n"
+        "FAILED tests/test_b.py::test_fail - AssertionError: Status code 500\n"
+        "=================== 1 failed in 0.3s ==================="
+    )
+    preview_err = build_compact_preview(pytest_err, max_chars=120)
+    assert "AssertionError" in preview_err or "FAILED" in preview_err
+    assert len(preview_err) <= 135
+
+    # Test constraint line preservation
+    conv_with_constraint = (
+        "We are analyzing the project structure.\n"
+        "Never edit files under auth/.\n"
+        "Proceeding with the remaining tests."
+    )
+    preview_c = build_compact_preview(conv_with_constraint, max_chars=140)
+    assert "Never edit files under auth/." in preview_c
+
+
+def test_tool_pair_integrity_validation():
+    from minicode.context_budget import validate_tool_pair_integrity
+
+    # Valid pair
+    valid_msgs = [
+        {"role": "user", "content": "read file"},
+        {"role": "assistant_tool_call", "toolName": "read_file", "toolUseId": "call_1", "input": {}},
+        {"role": "tool_result", "toolName": "read_file", "toolUseId": "call_1", "content": "file contents"},
+    ]
+    assert validate_tool_pair_integrity(valid_msgs) is True
+
+    # Offloaded pair (content replaced with artifact reference)
+    offloaded_msgs = [
+        {"role": "assistant_tool_call", "toolName": "read_file", "toolUseId": "call_1", "input": {}},
+        {"role": "tool_result", "toolName": "read_file", "toolUseId": "call_1", "content": "[Context Artifact]\nid: ctx_123"},
+    ]
+    assert validate_tool_pair_integrity(offloaded_msgs) is True
+
+    # Evicted tombstone pair
+    evicted_msgs = [
+        {"role": "assistant_tool_call", "toolName": "read_file", "toolUseId": "call_1", "input": {}},
+        {"role": "tool_result", "toolName": "read_file", "toolUseId": "call_1", "content": "[Output cleared]"},
+    ]
+    assert validate_tool_pair_integrity(evicted_msgs) is True
+
+    # Broken: orphan result with no call
+    broken_orphan = [
+        {"role": "user", "content": "hello"},
+        {"role": "tool_result", "toolName": "read_file", "toolUseId": "call_missing", "content": "data"},
+    ]
+    assert validate_tool_pair_integrity(broken_orphan) is False
+
+    # Broken: call with no result
+    broken_unanswered = [
+        {"role": "assistant_tool_call", "toolName": "read_file", "toolUseId": "call_unanswered", "input": {}},
+    ]
+    assert validate_tool_pair_integrity(broken_unanswered) is False
+
+    # Broken: mismatched call ID
+    broken_mismatch = [
+        {"role": "assistant_tool_call", "toolName": "read_file", "toolUseId": "call_1", "input": {}},
+        {"role": "tool_result", "toolName": "read_file", "toolUseId": "call_2", "content": "data"},
+    ]
+    assert validate_tool_pair_integrity(broken_mismatch) is False
+
+
+def test_real_compactor_fallback_and_compliance(tmp_path):
+    from minicode.context_compactor import ContextCompactor
+
+    compactor = ContextCompactor(workspace=tmp_path)
+    mgr = ContextBudgetManager()
+
+    messages = [
+        {"role": "system", "content": "You are assistant."},
+        {"role": "user", "content": "Do a refactoring task."},
+    ]
+    for i in range(10):
+        messages.append({
+            "role": "assistant_tool_call",
+            "toolName": "grep",
+            "toolUseId": f"call_{i}",
+            "input": {"query": f"match_{i}"},
+        })
+        messages.append({
+            "role": "tool_result",
+            "toolName": "grep",
+            "toolUseId": f"call_{i}",
+            "content": f"match_{i}_result_data\n" * 80,
+        })
+
+    # Available budget = 100
+    target_budget = 100
+    phase3_msgs, plan = mgr.plan_and_apply(
+        messages=messages,
+        available_budget=target_budget,
+        compactor=compactor,
+    )
+
+    # Verify fallback tracking fields
+    assert plan.fallback_attempted is True
+    assert isinstance(plan.fallback_effective, bool)
+    # Compliance must strictly be evaluated against budget
+    tokens_final = sum(len(str(m)) // 4 for m in phase3_msgs)
+    if plan.tokens_after_estimate <= target_budget:
+        assert plan.budget_compliant is True
+    else:
+        assert plan.budget_compliant is False
+
+
+def test_protected_context_over_budget_violation():
+    mgr = ContextBudgetManager()
+    # Huge task constraint that exceeds available budget of 50 tokens
+    huge_constraint = "CRITICAL CONSTRAINT: " + "Must strictly preserve legacy endpoints without any alterations. " * 10
+    messages = [
+        {"role": "system", "content": "System prompt with base rules."},
+        {"role": "user", "content": huge_constraint},
+        {"role": "user", "content": "Now run next step."},
+    ]
+
+    phase3_msgs, plan = mgr.plan_and_apply(messages=messages, available_budget=50)
+
+    # Protected context cannot fit into 50 tokens -> must report violation, NOT fake compliant
+    assert plan.budget_compliant is False
+    assert plan.budget_violation_reason == "protected_context_exceeds_budget"
+    # Crucially, protected constraint must NOT be deleted
+    assert any("Must strictly preserve legacy endpoints" in str(m.get("content", "")) for m in phase3_msgs)
