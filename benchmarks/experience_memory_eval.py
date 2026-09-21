@@ -172,6 +172,18 @@ BENCHMARK_CASES: list[EvalTraceCase] = [
         expect_persist=False,
         stop_status="blocked",
     ),
+    EvalTraceCase(
+        case_id="case-11-unverified-doc-formatting",
+        description="Fix markdown documentation formatting and headers",
+        tools=[
+            ("view_file", {"path": "docs/api.md"}, True, "# API Docs\n..."),
+            ("replace_file_content", {"TargetFile": "docs/api.md"}, True, "formatted"),
+        ],
+        verification=None,
+        expected_task_type="bug_fix",
+        expected_outcome=ExperienceOutcome.SUCCESS_UNVERIFIED,
+        expect_persist=True,
+    ),
 ]
 
 
@@ -259,54 +271,87 @@ def run_experience_benchmark(workspace_path: Path | None = None) -> dict[str, An
     quality_gate_accuracy = round(quality_gate_correct / len(BENCHMARK_CASES), 3)
 
     # --- Phase B: Retrieval, Reuse, and Feedback Loop ---
-    injector = MemoryInjector(memory_manager=mgr, min_relevance=0.1)
+    injector = MemoryInjector(memory_manager=mgr, min_relevance=0.1, metrics=pipeline.metrics)
 
-    # Query 1: Should retrieve case-1 verified experience
-    q1_results = injector.inject_for_task("AssertionError in authentication endpoint")
-    q1_top = q1_results[0] if q1_results else None
-    q1_formatted = injector.format_for_prompt(q1_results) if q1_results else ""
-    q1_match = (
-        q1_top is not None
-        and "[Verified Experience]" in q1_formatted
-        and "auth" in q1_top.content.lower()
+    # 1. Query A: Relevant SUCCESS_VERIFIED (Auth bug fix)
+    q_a_results = injector.inject_for_task("AssertionError in authentication endpoint")
+    q_a_top = q_a_results[0] if q_a_results else None
+    q_a_formatted = injector.format_for_prompt(q_a_results) if q_a_results else ""
+    q_a_match = (
+        q_a_top is not None
+        and "[Verified Experience]" in q_a_formatted
+        and "auth" in q_a_top.content.lower()
     )
 
-    # Query 2: Should retrieve case-2 dependency experience
-    q2_results = injector.inject_for_task("ModuleNotFoundError pyyaml in config loader")
-    q2_top = q2_results[0] if q2_results else None
-    q2_match = (
-        q2_top is not None
-        and "yaml" in q2_top.content.lower()
+    # 2. Query A2: Relevant SUCCESS_VERIFIED (Dependency resolution)
+    q_a2_results = injector.inject_for_task("ModuleNotFoundError pyyaml in config loader")
+    q_a2_top = q_a2_results[0] if q_a2_results else None
+    q_a2_match = (
+        q_a2_top is not None
+        and "yaml" in q_a2_top.content.lower()
     )
 
-    # Query 3: Negative Transfer Check (Normal feature implementation query)
-    q3_results = injector.inject_for_task("Implement user avatar upload endpoint")
-    # Check if any failure pattern is wrongly injected into normal execution
-    negative_transfer_count = sum(
-        1 for m in q3_results
-        if getattr(m, "outcome", None) in ("failed_tool", "failed_verification")
-        or "Past Failure Pattern" in m.content
+    # 3. Query B: Relevant SUCCESS_UNVERIFIED (Doc formatting)
+    q_b_results = injector.inject_for_task("Fix markdown documentation formatting")
+    q_b_top = q_b_results[0] if q_b_results else None
+    q_b_formatted = injector.format_for_prompt(q_b_results) if q_b_results else ""
+    q_b_match = (
+        q_b_top is not None
+        and "[Unverified Experience]" in q_b_formatted
+        and "docs/api.md" in q_b_top.content.lower()
     )
-    negative_transfer_rate = round(negative_transfer_count / max(len(q3_results), 1), 3)
 
-    # Query 4: Failure recovery query
-    q4_results = injector.inject_on_failure(
+    # 4. Query C: Surface/lexically highly relevant to FAILED_VERIFICATION (Permission error)
+    # Must NOT leak failure pattern into normal task prompt
+    q_c_results = injector.inject_for_task("Fix permission error when executing deployment script")
+
+    # 5. Query D: Surface/lexically highly relevant to FAILED_TOOL (Secret credential error)
+    # Must NOT leak failure pattern into normal task prompt
+    q_d_results = injector.inject_for_task("Fix authentication error configuring credentials with OpenAI and GitHub")
+
+    # 6. Query E: Completely irrelevant query (No relevant memories should match)
+    q_e_results = injector.inject_for_task("Implement quantum encryption algorithm from scratch")
+
+    # 7. Query F: Failure recovery query (inject_on_failure)
+    q_fail_results = injector.inject_on_failure(
         error_message="PermissionError: [Errno 13] Permission denied",
         tool_name="run_command",
     )
-    q4_top = q4_results[0] if q4_results else None
-    q4_formatted = injector.format_for_prompt(q4_results) if q4_results else ""
-    q4_match = (
-        q4_top is not None
-        and "[Past Failure Pattern]" in q4_formatted
-        and "permission" in q4_top.content.lower()
+    q_fail_top = q_fail_results[0] if q_fail_results else None
+    q_fail_formatted = injector.format_for_prompt(q_fail_results) if q_fail_results else ""
+    q_fail_match = (
+        q_fail_top is not None
+        and "[Past Failure Pattern]" in q_fail_formatted
+        and "permission" in q_fail_top.content.lower()
     )
 
-    # Recall & Precision Metrics
+    # Normal queries collection (A, A2, B, C, D, E)
+    all_normal_injected = q_a_results + q_a2_results + q_b_results + q_c_results + q_d_results + q_e_results
+    normal_exp_injected = [m for m in all_normal_injected if m.category == "experience"]
+
+    # Normal failure leakage rate: proportion of failure experiences among injected normal experiences (Target: 0.0)
+    failed_injected_count = sum(
+        1 for m in normal_exp_injected
+        if getattr(m, "outcome", None) in ("failed_tool", "failed_verification")
+        or "Past Failure Pattern" in m.content
+    )
+    normal_failure_leakage_rate = round(failed_injected_count / max(len(normal_exp_injected), 1), 3)
+    negative_transfer_rate = normal_failure_leakage_rate
+
+    # Verified Experience Precision@3 across queries targeting verified experience (q_a, q_a2)
+    verified_queries_injected = q_a_results[:3] + q_a2_results[:3]
+    verified_at_3_count = sum(1 for m in verified_queries_injected if getattr(m, "outcome", None) == "success_verified")
+    verified_precision_at_3 = round(verified_at_3_count / max(len(verified_queries_injected), 1), 3)
+
+    # Verified precision across all normal injected experiences
+    verified_total_count = sum(1 for m in normal_exp_injected if getattr(m, "outcome", None) == "success_verified")
+    verified_precision_at_k = round(verified_total_count / max(len(normal_exp_injected), 1), 3)
+
+    # Recall metrics
     recall_queries = [
-        (q1_results, "auth"),
-        (q2_results, "yaml"),
-        (q4_results, "permission"),
+        (q_a_results, "auth"),
+        (q_a2_results, "yaml"),
+        (q_fail_results, "permission"),
     ]
     r_at_1_hits = sum(1 for res, kw in recall_queries if res and kw in res[0].content.lower())
     recall_at_1 = round(r_at_1_hits / len(recall_queries), 3)
@@ -314,12 +359,7 @@ def run_experience_benchmark(workspace_path: Path | None = None) -> dict[str, An
     r_at_3_hits = sum(1 for res, kw in recall_queries if any(kw in m.content.lower() for m in res[:3]))
     recall_at_3 = round(r_at_3_hits / len(recall_queries), 3)
 
-    # Verified Precision@K in normal queries
-    normal_injected = q1_results + q2_results + q3_results
-    verified_injected_count = sum(1 for m in normal_injected if getattr(m, "outcome", None) == "success_verified")
-    verified_precision_at_k = round(verified_injected_count / max(len(normal_injected), 1), 3)
-
-    failure_recall_at_k = 1.0 if q4_match else 0.0
+    failure_recall_at_k = 1.0 if q_fail_match else 0.0
     reuse_hit_rate = round(sum(1 for res, _ in recall_queries if len(res) > 0) / len(recall_queries), 3)
 
     # Metadata Preservation Verification (Case 9)
@@ -355,14 +395,14 @@ def run_experience_benchmark(workspace_path: Path | None = None) -> dict[str, An
     initial_usage = 0
     final_usage_positive = 0
     final_usage_negative = 0
-    if q1_top and q1_top.memory_id:
-        target_entry = mgr.memories[MemoryScope.PROJECT]._id_index.get(q1_top.memory_id)
+    if q_a_top and q_a_top.memory_id:
+        target_entry = mgr.memories[MemoryScope.PROJECT]._id_index.get(q_a_top.memory_id)
         if target_entry:
             initial_usage = target_entry.usage_count
-            pipeline.feedback(task_success=True, injected_memory_ids=[q1_top.memory_id])
+            pipeline.feedback(task_success=True, injected_memory_ids=[q_a_top.memory_id])
             final_usage_positive = target_entry.usage_count
 
-            pipeline.feedback(task_success=False, injected_memory_ids=[q1_top.memory_id])
+            pipeline.feedback(task_success=False, injected_memory_ids=[q_a_top.memory_id])
             final_usage_negative = target_entry.usage_count
 
     feedback_correct = (
@@ -386,7 +426,9 @@ def run_experience_benchmark(workspace_path: Path | None = None) -> dict[str, An
         "quality_gate_accuracy": quality_gate_accuracy,
         "recall_at_1": recall_at_1,
         "recall_at_3": recall_at_3,
+        "verified_precision_at_3": verified_precision_at_3,
         "verified_precision_at_k": verified_precision_at_k,
+        "normal_failure_leakage_rate": normal_failure_leakage_rate,
         "failure_recall_at_k": failure_recall_at_k,
         "reuse_hit_rate": reuse_hit_rate,
         "negative_transfer_rate": negative_transfer_rate,
@@ -394,8 +436,8 @@ def run_experience_benchmark(workspace_path: Path | None = None) -> dict[str, An
         "metadata_preservation_rate": metadata_preservation_score,
         "feedback_accuracy": feedback_accuracy,
         # Legacy boolean flags for backwards compatibility
-        "recall_verified_experience": q1_match,
-        "recall_failure_pattern": q4_match,
+        "recall_verified_experience": q_a_match,
+        "recall_failure_pattern": q_fail_match,
         "feedback_loop_accurate": feedback_correct,
     }
 
