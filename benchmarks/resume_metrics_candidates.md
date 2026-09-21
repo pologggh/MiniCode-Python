@@ -7,15 +7,15 @@ The following candidate metrics are strictly derived from the reproducible Final
 ### 1. Context & Prompt Efficiency
 
 - **Skill Prompt Token Reduction**:
-  - *Baseline*: ~5,475 estimated tokens per task (100-skill catalog) | ~27,475 estimated tokens (500-skill catalog).
-  - *Adaptive*: ~52 estimated tokens per task.
-  - *Impact*: **~99.0% reduction** in prompt tokens exposed to model context while maintaining **100% relevant skill recall**.
+  - *Baseline*: ~3,378 estimated tokens per task (100-skill catalog) | ~17,303 estimated tokens (500-skill catalog).
+  - *Adaptive*: ~51.9 estimated tokens per task.
+  - *Impact*: **~98.5% reduction** in prompt tokens exposed to model context while maintaining **100% relevant skill recall**.
   - *Source*: `benchmarks/final_eval/worker.py:run_skill_routing_benchmark` & `minicode/skill_router.py`.
 
 - **Context Budget & Artifact Offloading**:
   - *Baseline*: Context compactor truncated large tool logs permanently (zero artifact recovery).
-  - *Adaptive*: Enforced strict token budgets (e.g. 6,000 token limit) by offloading 100% of massive tool results to recoverable disk artifacts with on-demand range retrieval.
-  - *Impact*: Protected 100% of early critical architectural constraints and latest verification evidence under extreme context pressure.
+  - *Adaptive*: Enforced strict token budgets (e.g. 6,000 token limit) by offloading massive tool results to recoverable disk artifacts with on-demand range retrieval.
+  - *Impact*: Protected early critical architectural constraints and latest verification evidence under extreme context pressure.
   - *Source*: `minicode/context_budget.py` and `minicode/context_artifacts.py`.
 
 ---
@@ -23,8 +23,8 @@ The following candidate metrics are strictly derived from the reproducible Final
 ### 2. Experience Memory & Knowledge Transfer
 
 - **Negative Transfer / Failure Leakage Elimination**:
-  - *Baseline*: Keyword-based memory search leaked past failure records into ~25% of normal coding queries.
-  - *Adaptive*: Outcome-aware memory gating achieved **0.0% failure leakage** and **100% verified experience precision** for standard task retrieval.
+  - *Baseline*: Keyword-based memory search leaked past failure records into ~38.0% of normal coding queries.
+  - *Adaptive*: Outcome-aware memory gating achieved **0.0% failure leakage** and **67.0% verified experience precision** for standard task retrieval.
   - *Source*: `minicode/memory_injector.py` and `minicode/experience.py`.
 
 - **Experience Deduplication**:
@@ -52,5 +52,5 @@ The following candidate metrics are strictly derived from the reproducible Final
 
 - **Sensitive Data Redaction & Tamper-Evident Audit**:
   - *Baseline*: 100% secret leakage on `.env` file reads; zero audit chain.
-  - *Adaptive*: **0.0% secret leakage** via automated API key masking, and **100% audit log verification** via append-only SHA-256 cryptographic hash chaining.
+  - *Adaptive*: **0% secret leakage** via automated API key masking, and **100% audit log verification** via append-only SHA-256 cryptographic hash chaining.
   - *Source*: `minicode/redaction.py` and `minicode/security_audit.py`.

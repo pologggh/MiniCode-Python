@@ -94,7 +94,28 @@ def run_worker_process(repo_dir: str, target_worktree: Path, output_file: Path) 
         return json.load(f)
 
 
-def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any]) -> list[MetricRecord]:
+def _require_field(data: dict[str, Any], path: list[str], invalid_reasons: list[str]) -> Any:
+    curr = data
+    for p in path:
+        if not isinstance(curr, dict) or p not in curr:
+            reason = f"Missing required field '{'.'.join(path)}' in worker results"
+            invalid_reasons.append(reason)
+            return None
+        curr = curr[p]
+    return curr
+
+
+def build_comparison_matrix(
+    base_data: dict[str, Any],
+    adapt_data: dict[str, Any],
+    invalid_reasons: list[str],
+) -> list[MetricRecord]:
+    # Check worker provenance
+    if not base_data.get("loaded_minicode_path"):
+        invalid_reasons.append("Baseline worker did not record loaded_minicode_path")
+    if not adapt_data.get("loaded_minicode_path"):
+        invalid_reasons.append("Adaptive worker did not record loaded_minicode_path")
+
     base_cats = base_data.get("categories", {})
     adapt_cats = adapt_data.get("categories", {})
     records: list[MetricRecord] = []
@@ -109,6 +130,11 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         b_info = base_cat_sizes.get(sz, {})
         a_info = adapt_cat_sizes.get(sz, {})
 
+        if not b_info:
+            invalid_reasons.append(f"Baseline missing skill catalog size {sz}")
+        if not a_info:
+            invalid_reasons.append(f"Adaptive missing skill catalog size {sz}")
+
         records.append(compute_metric(
             name=f"skill_recall_catalog_{sz}",
             category="Skill Routing",
@@ -116,8 +142,8 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
             comparability=Comparability.DIRECT,
             direction=MetricDirection.HIGHER_IS_BETTER,
             unit="rate",
-            baseline_val=b_info.get("recall_rate", 1.0),
-            adaptive_val=a_info.get("recall_rate", 1.0),
+            baseline_val=b_info.get("recall_rate", 0.0),
+            adaptive_val=a_info.get("recall_rate", 0.0),
             notes="Target skill retrieved in routed prompt",
         ))
         records.append(compute_metric(
@@ -138,9 +164,42 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
             comparability=Comparability.DIRECT,
             direction=MetricDirection.LOWER_IS_BETTER,
             unit="count",
-            baseline_val=b_info.get("avg_skills_exposed", int(sz)),
+            baseline_val=b_info.get("avg_skills_exposed", 0),
             adaptive_val=a_info.get("avg_skills_exposed", 0),
             notes="Baseline exposes entire catalog on every turn",
+        ))
+        records.append(compute_metric(
+            name=f"skill_exposure_precision_{sz}",
+            category="Skill Routing",
+            description=f"Skill exposure precision: relevant_exposures / all_exposures ({sz} catalog)",
+            comparability=Comparability.DIRECT,
+            direction=MetricDirection.HIGHER_IS_BETTER,
+            unit="rate",
+            baseline_val=b_info.get("skill_exposure_precision", 0.0),
+            adaptive_val=a_info.get("skill_exposure_precision", 0.0),
+            notes="Proportion of exposed skills that match query relevance",
+        ))
+        records.append(compute_metric(
+            name=f"avg_irrelevant_skills_exposed_{sz}",
+            category="Skill Routing",
+            description=f"Average irrelevant skills exposed in prompt ({sz} catalog)",
+            comparability=Comparability.DIRECT,
+            direction=MetricDirection.LOWER_IS_BETTER,
+            unit="count",
+            baseline_val=b_info.get("avg_irrelevant_skills_exposed", 0),
+            adaptive_val=a_info.get("avg_irrelevant_skills_exposed", 0),
+            notes="Average count of non-relevant skills cluttering model context",
+        ))
+        records.append(compute_metric(
+            name=f"unrelated_query_exposure_count_{sz}",
+            category="Skill Routing",
+            description=f"Total skills exposed on unrelated queries ({sz} catalog)",
+            comparability=Comparability.DIRECT,
+            direction=MetricDirection.LOWER_IS_BETTER,
+            unit="count",
+            baseline_val=b_info.get("unrelated_query_exposure_count", 0),
+            adaptive_val=a_info.get("unrelated_query_exposure_count", 0),
+            notes="Exposures on queries having zero relevant skills",
         ))
         records.append(compute_metric(
             name=f"false_positive_rate_{sz}",
@@ -149,9 +208,9 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
             comparability=Comparability.DIRECT,
             direction=MetricDirection.LOWER_IS_BETTER,
             unit="rate",
-            baseline_val=b_info.get("false_positive_exposure_rate", 1.0),
+            baseline_val=b_info.get("false_positive_exposure_rate", 0.0),
             adaptive_val=a_info.get("false_positive_exposure_rate", 0.0),
-            notes="Fraction of irrelevant skills dumped into prompt",
+            notes="Fraction of unrelated queries that incorrectly received skill exposures",
         ))
 
     records.append(compute_metric(
@@ -162,7 +221,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val=base_skill.get("edge_cases", {}).get("high_priority_unrelated_suppressed", False),
-        adaptive_val=adapt_skill.get("edge_cases", {}).get("high_priority_unrelated_suppressed", True),
+        adaptive_val=adapt_skill.get("edge_cases", {}).get("high_priority_unrelated_suppressed", False),
         notes="Prevents urgent alert skills hijacking database queries",
     ))
 
@@ -189,7 +248,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="rate",
         baseline_val=base_mem.get("verified_retrieval_precision", 0.0),
-        adaptive_val=adapt_mem.get("verified_retrieval_precision", 1.0),
+        adaptive_val=adapt_mem.get("verified_retrieval_precision", 0.0),
         notes="Adaptive enforces verification status in memory records",
     ))
     records.append(compute_metric(
@@ -200,7 +259,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="rate",
         baseline_val=base_mem.get("failure_recovery_recall", "N/A"),
-        adaptive_val=adapt_mem.get("failure_recovery_recall", 1.0),
+        adaptive_val=adapt_mem.get("failure_recovery_recall", 0.0),
         notes="Baseline lacks structured recovery routing",
     ))
     records.append(compute_metric(
@@ -211,7 +270,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val=base_mem.get("dedup_behavior", False),
-        adaptive_val=adapt_mem.get("dedup_behavior", True),
+        adaptive_val=adapt_mem.get("dedup_behavior", False),
         notes="Prevents memory bloat across repeated workflows",
     ))
     records.append(compute_metric(
@@ -222,7 +281,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val=base_mem.get("metadata_preservation", False),
-        adaptive_val=adapt_mem.get("metadata_preservation", True),
+        adaptive_val=adapt_mem.get("metadata_preservation", False),
         notes="Baseline stores unstructured text entries",
     ))
 
@@ -239,7 +298,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         unit="tokens",
         baseline_val=base_ctx.get("estimated_context_tokens", 0),
         adaptive_val=adapt_ctx.get("estimated_context_tokens", 0),
-        notes="Adaptive offloads massive tool outputs to artifacts",
+        notes="Adaptive offloads massive tool outputs to artifacts while preserving summaries",
     ))
     records.append(compute_metric(
         name="critical_constraint_retention",
@@ -249,8 +308,8 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val=base_ctx.get("critical_retention", False),
-        adaptive_val=adapt_ctx.get("critical_retention", True),
-        notes="Protected constraints survive aggressive compaction",
+        adaptive_val=adapt_ctx.get("critical_retention", False),
+        notes="Protected constraints survive compaction and budgeting",
     ))
     records.append(compute_metric(
         name="stable_task_retention",
@@ -260,7 +319,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val=base_ctx.get("stable_task_retention", False),
-        adaptive_val=adapt_ctx.get("stable_task_retention", True),
+        adaptive_val=adapt_ctx.get("stable_task_retention", False),
         notes="System prompt and core task retained",
     ))
     records.append(compute_metric(
@@ -271,18 +330,18 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val=base_ctx.get("latest_verification_retention", False),
-        adaptive_val=adapt_ctx.get("latest_verification_retention", True),
+        adaptive_val=adapt_ctx.get("latest_verification_retention", False),
         notes="Recent verification evidence protected with high priority",
     ))
     records.append(compute_metric(
         name="budget_compliance",
         category="Context Management",
-        description="Compliance of prepared messages with configured token budget",
+        description="Compliance of prepared messages with configured token budget (6000 tokens)",
         comparability=Comparability.DIRECT,
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val=base_ctx.get("budget_compliance", False),
-        adaptive_val=adapt_ctx.get("budget_compliance", True),
+        adaptive_val=adapt_ctx.get("budget_compliance", False),
         notes="Strict layer budgeting in adaptive mode",
     ))
     records.append(compute_metric(
@@ -293,7 +352,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val="UNSUPPORTED",
-        adaptive_val=adapt_ctx.get("artifact_recovery_supported", True),
+        adaptive_val=adapt_ctx.get("artifact_recovery_supported", False),
         notes="Baseline discards truncated tool results permanently",
     ))
 
@@ -308,8 +367,8 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         comparability=Comparability.DIRECT,
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
-        baseline_val=base_ma.get("one_off_task_delegation", True),
-        adaptive_val=adapt_ma.get("one_off_task_delegation", True),
+        baseline_val=base_ma.get("one_off_task_delegation", False),
+        adaptive_val=adapt_ma.get("one_off_task_delegation", False),
         notes="Supported in both baseline and adaptive",
     ))
     records.append(compute_metric(
@@ -320,7 +379,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val="UNSUPPORTED",
-        adaptive_val=adapt_ma.get("centralized_multi_agent", True),
+        adaptive_val=adapt_ma.get("centralized_multi_agent", False),
         notes="Baseline only has single one-off task tool",
     ))
     records.append(compute_metric(
@@ -331,7 +390,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val="UNSUPPORTED",
-        adaptive_val=adapt_ma.get("dag_dependency_execution", True),
+        adaptive_val=adapt_ma.get("dag_dependency_execution", False),
         notes="Adaptive executes research -> coding -> test -> review pipeline",
     ))
     records.append(compute_metric(
@@ -342,7 +401,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val="UNSUPPORTED",
-        adaptive_val=adapt_ma.get("sibling_concurrency", True),
+        adaptive_val=adapt_ma.get("sibling_concurrency", False),
         notes="Adaptive parallelizes independent research nodes",
     ))
     records.append(compute_metric(
@@ -353,7 +412,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val="UNSUPPORTED",
-        adaptive_val=adapt_ma.get("writer_serialization", True),
+        adaptive_val=adapt_ma.get("writer_serialization", False),
         notes="Adaptive serializes coder agents",
     ))
     records.append(compute_metric(
@@ -364,7 +423,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val="UNSUPPORTED",
-        adaptive_val=adapt_ma.get("role_quality_gates", True),
+        adaptive_val=adapt_ma.get("role_quality_gates", False),
         notes="Enforces test evidence and code review approvals",
     ))
     records.append(compute_metric(
@@ -375,7 +434,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val="UNSUPPORTED",
-        adaptive_val=adapt_ma.get("bounded_replan", True),
+        adaptive_val=adapt_ma.get("bounded_replan", False),
         notes="Capped by max_replan_attempts",
     ))
     records.append(compute_metric(
@@ -386,8 +445,19 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val="UNSUPPORTED",
-        adaptive_val=adapt_ma.get("parent_context_isolation", True),
+        adaptive_val=adapt_ma.get("parent_context_isolation", False),
         notes="Parent receives concise tool result, raw child history retained in child",
+    ))
+    records.append(compute_metric(
+        name="multi_agent_runtime_verified",
+        category="Multi-Agent Runtime",
+        description="Runtime verification of planner, DAG scheduler, and quality gates",
+        comparability=Comparability.DIRECT,
+        direction=MetricDirection.HIGHER_IS_BETTER,
+        unit="boolean",
+        baseline_val=base_ma.get("runtime_verified", False),
+        adaptive_val=adapt_ma.get("runtime_verified", False),
+        notes="Executed directly within worker runtime environment",
     ))
 
     # Category E: Security Policy
@@ -401,8 +471,8 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         comparability=Comparability.DIRECT,
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="rate",
-        baseline_val=base_sec.get("critical_action_block_rate", 0.33),
-        adaptive_val=adapt_sec.get("critical_action_block_rate", 1.0),
+        baseline_val=base_sec.get("critical_action_block_rate", 0.0),
+        adaptive_val=adapt_sec.get("critical_action_block_rate", 0.0),
         notes="Adaptive enforces hard denial even in BYPASS permission mode",
     ))
     records.append(compute_metric(
@@ -412,8 +482,8 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         comparability=Comparability.DIRECT,
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="rate",
-        baseline_val=base_sec.get("permission_enforcement_rate", 0.60),
-        adaptive_val=adapt_sec.get("permission_enforcement_rate", 0.80),
+        baseline_val=base_sec.get("permission_enforcement_rate", 0.0),
+        adaptive_val=adapt_sec.get("permission_enforcement_rate", 0.0),
         notes="Gating sensitive file edits and commands",
     ))
     records.append(compute_metric(
@@ -423,9 +493,9 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         comparability=Comparability.DIRECT,
         direction=MetricDirection.LOWER_IS_BETTER,
         unit="rate",
-        baseline_val=base_sec.get("sensitive_secret_leak_rate", 1.0),
+        baseline_val=base_sec.get("sensitive_secret_leak_rate", 0.0),
         adaptive_val=adapt_sec.get("sensitive_secret_leak_rate", 0.0),
-        notes="Adaptive automatically masks API keys with [REDACTED_SECRET]",
+        notes="Adaptive automatically masks API keys with [REDACTED]",
     ))
     records.append(compute_metric(
         name="fail_closed_missing_permissions",
@@ -434,8 +504,8 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         comparability=Comparability.DIRECT,
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="rate",
-        baseline_val=base_sec.get("fail_closed_rate", 0.50),
-        adaptive_val=adapt_sec.get("fail_closed_rate", 1.0),
+        baseline_val=base_sec.get("fail_closed_rate", 0.0),
+        adaptive_val=adapt_sec.get("fail_closed_rate", 0.0),
         notes="Adaptive blocks tool execution when approval route fails",
     ))
     records.append(compute_metric(
@@ -446,7 +516,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val=base_sec.get("mcp_pre_execution_gate", False),
-        adaptive_val=adapt_sec.get("mcp_pre_execution_gate", True),
+        adaptive_val=adapt_sec.get("mcp_pre_execution_gate", False),
         notes="Adaptive classifies unknown MCP tools as UNTRUSTED_EXTERNAL",
     ))
     records.append(compute_metric(
@@ -457,7 +527,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val=base_sec.get("untrusted_taint_enforcement", False),
-        adaptive_val=adapt_sec.get("untrusted_taint_enforcement", True),
+        adaptive_val=adapt_sec.get("untrusted_taint_enforcement", False),
         notes="Adaptive escalates ALLOW decisions to ASK if untrusted taint is present",
     ))
     records.append(compute_metric(
@@ -468,7 +538,7 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
         baseline_val="UNSUPPORTED",
-        adaptive_val=adapt_sec.get("tamper_evident_audit", True),
+        adaptive_val=adapt_sec.get("tamper_evident_audit", False),
         notes="Cryptographic hash chaining validates audit log integrity",
     ))
 
@@ -483,8 +553,8 @@ def build_comparison_matrix(base_data: dict[str, Any], adapt_data: dict[str, Any
         comparability=Comparability.DIRECT,
         direction=MetricDirection.HIGHER_IS_BETTER,
         unit="boolean",
-        baseline_val=base_rt.get("all_tasks_completed", True),
-        adaptive_val=adapt_rt.get("all_tasks_completed", True),
+        baseline_val=base_rt.get("all_tasks_completed", False),
+        adaptive_val=adapt_rt.get("all_tasks_completed", False),
         notes="Both versions complete identical scripted agent loop tasks",
     ))
 
@@ -497,6 +567,45 @@ def generate_markdown_report(
     adapt_data: dict[str, Any],
     records: list[MetricRecord],
 ) -> str:
+    metrics_by_name = {r.name: r for r in records}
+
+    # Dynamically extract metric values for text highlights
+    st_100 = metrics_by_name.get("skill_prompt_tokens_100")
+    st_500 = metrics_by_name.get("skill_prompt_tokens_500")
+    sr_100 = metrics_by_name.get("skill_recall_catalog_100")
+    b_st_100 = f"{st_100.baseline_value:,}" if st_100 else "N/A"
+    a_st_100 = f"{st_100.adaptive_value:,}" if st_100 else "N/A"
+    rel_st_100 = f"{abs(st_100.relative_delta):.1f}% reduction" if (st_100 and st_100.relative_delta is not None) else "N/A"
+    b_st_500 = f"{st_500.baseline_value:,}" if st_500 else "N/A"
+    a_st_500 = f"{st_500.adaptive_value:,}" if st_500 else "N/A"
+    rec_val = f"{sr_100.adaptive_value * 100:.0f}%" if sr_100 else "100%"
+
+    sp_100 = metrics_by_name.get("skill_exposure_precision_100")
+    si_100 = metrics_by_name.get("avg_irrelevant_skills_exposed_100")
+    fp_100 = metrics_by_name.get("false_positive_rate_100")
+    b_sp_100 = f"{sp_100.baseline_value * 100:.1f}%" if sp_100 else "N/A"
+    a_sp_100 = f"{sp_100.adaptive_value * 100:.1f}%" if sp_100 else "N/A"
+    b_si_100 = f"{si_100.baseline_value}" if si_100 else "N/A"
+    a_si_100 = f"{si_100.adaptive_value}" if si_100 else "N/A"
+    b_fp_100 = f"{fp_100.baseline_value * 100:.1f}%" if fp_100 else "N/A"
+    a_fp_100 = f"{fp_100.adaptive_value * 100:.1f}%" if fp_100 else "N/A"
+
+    mem_leak = metrics_by_name.get("normal_failure_leakage")
+    b_leak = f"{mem_leak.baseline_value * 100:.1f}%" if mem_leak else "N/A"
+    a_leak = f"{mem_leak.adaptive_value * 100:.1f}%" if mem_leak else "N/A"
+
+    mem_prec = metrics_by_name.get("verified_retrieval_precision")
+    b_prec = f"{mem_prec.baseline_value * 100:.1f}%" if mem_prec else "N/A"
+    a_prec = f"{mem_prec.adaptive_value * 100:.1f}%" if mem_prec else "N/A"
+
+    sec_block = metrics_by_name.get("critical_action_block_rate")
+    b_block = f"{sec_block.baseline_value * 100:.0f}%" if sec_block else "N/A"
+    a_block = f"{sec_block.adaptive_value * 100:.0f}%" if sec_block else "N/A"
+
+    sec_leak = metrics_by_name.get("sensitive_secret_leak_rate")
+    b_sleak = f"{sec_leak.baseline_value * 100:.0f}%" if sec_leak else "N/A"
+    a_sleak = f"{sec_leak.adaptive_value * 100:.0f}%" if sec_leak else "N/A"
+
     lines = [
         "# Adaptive MiniCode Final Evaluation",
         "",
@@ -510,10 +619,12 @@ def generate_markdown_report(
         f"- **Platform**: `{adapt_data.get('platform')}`",
         f"- **Python Version**: `{adapt_data.get('python_version')}`",
         f"- **Timestamp**: `{adapt_data.get('timestamp')}`",
+        f"- **Baseline Loaded Minicode**: `{base_data.get('loaded_minicode_path')}`",
+        f"- **Adaptive Loaded Minicode**: `{adapt_data.get('loaded_minicode_path')}`",
         "",
         "## Methodology & Cross-Process Isolation",
         "",
-        "- **Zero Python Import Pollution**: Baseline and Adaptive codebases were executed in separate detached Git worktrees and isolated child Python subprocesses. `sys.path` in each worker strictly prioritized the target worktree root.",
+        "- **Zero Python Import Pollution**: Baseline and Adaptive codebases were executed in separate detached Git worktrees and isolated child Python subprocesses. `sys.path` in each worker strictly prioritized the target worktree root and validated containment via `Path(minicode.__file__)` assertions.",
         "- **Deterministic Local Fixtures**: All evaluated test fixtures used fixed seeds (seed=42) and local mock/scripted adapters with zero external network or non-deterministic online LLM calls.",
         "- **Wall Clock Statistics**: Latency metrics were recorded over 5 iterations per case and aggregated using the **median**.",
         "- **No Single Overall Score**: In accordance with evaluation guidelines, metrics are categorized into a structured Category Matrix without artificial overall scoring.",
@@ -566,12 +677,12 @@ def generate_markdown_report(
         "",
         "Key direct improvements where identical inputs were evaluated across both versions:",
         "",
-        "1. **Skill Catalog Prompt Tokens (100 Skills)**: Reduced from **~5,475 estimated tokens** to **~52 estimated tokens** (**~99.0% reduction** in exposed prompt tokens). In the 500-skill catalog, prompt tokens plummeted from **~27,475** to **~52 tokens** with **100% recall** of the target skill.",
-        "2. **False Positive Skill Exposure (100 Skills)**: Reduced from **99.0%** (entire catalog exposed to every task) to **0.0%** on unrelated domain tasks.",
-        "3. **Normal Experience Retrieval Failure Leakage**: Eliminated from **~25%** in baseline text search to **0.0%** in Adaptive through outcome-aware filtering.",
-        "4. **Verified Experience Precision**: Reached **100%** precision in Adaptive retrieval compared to unverified keyword matches in baseline.",
-        "5. **Catastrophic Command Block Rate**: Improved from **33%** in baseline to **100%** in Adaptive, which enforces hard denials on destructive commands (`git reset --hard`, `rm -rf`) even in `BYPASS` mode.",
-        "6. **Sensitive Secret Leak Rate**: Reduced from **100%** raw leakage on `.env` read to **0.0%** via automatic secret redaction (`[REDACTED_SECRET]`).",
+        f"1. **Skill Catalog Prompt Tokens (100 Skills)**: Reduced from **~{b_st_100} estimated tokens** to **~{a_st_100} estimated tokens** (**{rel_st_100}** in exposed prompt tokens). In the 500-skill catalog, prompt tokens dropped from **~{b_st_500}** to **~{a_st_500} tokens** with **{rec_val} recall** of the target skill.",
+        f"2. **Skill Exposure Precision (100 Skills)**: Improved from **{b_sp_100}** in baseline to **{a_sp_100}** in Adaptive. Irrelevant skills exposed per task dropped from **{b_si_100}** to **{a_si_100}**.",
+        f"3. **Normal Experience Retrieval Failure Leakage**: Eliminated from **{b_leak}** in baseline text search to **{a_leak}** in Adaptive through outcome-aware filtering.",
+        f"4. **Verified Experience Precision**: Reached **{a_prec}** precision in Adaptive retrieval compared to **{b_prec}** unverified keyword matches in baseline.",
+        f"5. **Catastrophic Command Block Rate**: Improved from **{b_block}** in baseline to **{a_block}** in Adaptive, which enforces hard denials on destructive commands (`git reset --hard`, `rm -rf`) even in `BYPASS` mode.",
+        f"6. **Sensitive Secret Leak Rate**: Reduced from **{b_sleak}** raw leakage on `.env` read to **{a_sleak}** via automatic secret redaction (`[REDACTED]`).",
         "",
         "## Adaptive-Only Capabilities",
         "",
@@ -585,7 +696,7 @@ def generate_markdown_report(
         "",
         "## Common Runtime Tasks",
         "",
-        "All 5 standard runtime tasks (code search, single-file edit, test command check, large result handling, and dangerous command gating) completed deterministically through the agent turn execution in both versions.",
+        "All 5 standard runtime tasks (code search, single-file edit, test command check, large result handling, and dangerous command gating) completed deterministically through real agent turn execution in both versions.",
         "",
         "## Live Model Evaluation",
         "",
@@ -603,6 +714,34 @@ def generate_markdown_report(
 
 
 def generate_resume_metrics(records: list[MetricRecord]) -> str:
+    metrics_by_name = {r.name: r for r in records}
+
+    st_100 = metrics_by_name.get("skill_prompt_tokens_100")
+    st_500 = metrics_by_name.get("skill_prompt_tokens_500")
+    sr_100 = metrics_by_name.get("skill_recall_catalog_100")
+    b_st_100 = f"{st_100.baseline_value:,}" if st_100 else "N/A"
+    a_st_100 = f"{st_100.adaptive_value:,}" if st_100 else "N/A"
+    rel_st_100 = f"{abs(st_100.relative_delta):.1f}% reduction" if (st_100 and st_100.relative_delta is not None) else "N/A"
+    b_st_500 = f"{st_500.baseline_value:,}" if st_500 else "N/A"
+    a_st_500 = f"{st_500.adaptive_value:,}" if st_500 else "N/A"
+    rec_val = f"{sr_100.adaptive_value * 100:.0f}%" if sr_100 else "100%"
+
+    mem_leak = metrics_by_name.get("normal_failure_leakage")
+    b_leak = f"{mem_leak.baseline_value * 100:.1f}%" if mem_leak else "N/A"
+    a_leak = f"{mem_leak.adaptive_value * 100:.1f}%" if mem_leak else "N/A"
+
+    mem_prec = metrics_by_name.get("verified_retrieval_precision")
+    b_prec = f"{mem_prec.baseline_value * 100:.1f}%" if mem_prec else "N/A"
+    a_prec = f"{mem_prec.adaptive_value * 100:.1f}%" if mem_prec else "N/A"
+
+    sec_block = metrics_by_name.get("critical_action_block_rate")
+    b_block = f"{sec_block.baseline_value * 100:.0f}%" if sec_block else "N/A"
+    a_block = f"{sec_block.adaptive_value * 100:.0f}%" if sec_block else "N/A"
+
+    sec_leak = metrics_by_name.get("sensitive_secret_leak_rate")
+    b_sleak = f"{sec_leak.baseline_value * 100:.0f}%" if sec_leak else "N/A"
+    a_sleak = f"{sec_leak.adaptive_value * 100:.0f}%" if sec_leak else "N/A"
+
     lines = [
         "# Verifiable Resume Metrics Candidates",
         "",
@@ -613,15 +752,15 @@ def generate_resume_metrics(records: list[MetricRecord]) -> str:
         "### 1. Context & Prompt Efficiency",
         "",
         "- **Skill Prompt Token Reduction**:",
-        "  - *Baseline*: ~5,475 estimated tokens per task (100-skill catalog) | ~27,475 estimated tokens (500-skill catalog).",
-        "  - *Adaptive*: ~52 estimated tokens per task.",
-        "  - *Impact*: **~99.0% reduction** in prompt tokens exposed to model context while maintaining **100% relevant skill recall**.",
+        f"  - *Baseline*: ~{b_st_100} estimated tokens per task (100-skill catalog) | ~{b_st_500} estimated tokens (500-skill catalog).",
+        f"  - *Adaptive*: ~{a_st_100} estimated tokens per task.",
+        f"  - *Impact*: **~{rel_st_100}** in prompt tokens exposed to model context while maintaining **{rec_val} relevant skill recall**.",
         "  - *Source*: `benchmarks/final_eval/worker.py:run_skill_routing_benchmark` & `minicode/skill_router.py`.",
         "",
         "- **Context Budget & Artifact Offloading**:",
         "  - *Baseline*: Context compactor truncated large tool logs permanently (zero artifact recovery).",
-        "  - *Adaptive*: Enforced strict token budgets (e.g. 6,000 token limit) by offloading 100% of massive tool results to recoverable disk artifacts with on-demand range retrieval.",
-        "  - *Impact*: Protected 100% of early critical architectural constraints and latest verification evidence under extreme context pressure.",
+        "  - *Adaptive*: Enforced strict token budgets (e.g. 6,000 token limit) by offloading massive tool results to recoverable disk artifacts with on-demand range retrieval.",
+        "  - *Impact*: Protected early critical architectural constraints and latest verification evidence under extreme context pressure.",
         "  - *Source*: `minicode/context_budget.py` and `minicode/context_artifacts.py`.",
         "",
         "---",
@@ -629,8 +768,8 @@ def generate_resume_metrics(records: list[MetricRecord]) -> str:
         "### 2. Experience Memory & Knowledge Transfer",
         "",
         "- **Negative Transfer / Failure Leakage Elimination**:",
-        "  - *Baseline*: Keyword-based memory search leaked past failure records into ~25% of normal coding queries.",
-        "  - *Adaptive*: Outcome-aware memory gating achieved **0.0% failure leakage** and **100% verified experience precision** for standard task retrieval.",
+        f"  - *Baseline*: Keyword-based memory search leaked past failure records into ~{b_leak} of normal coding queries.",
+        f"  - *Adaptive*: Outcome-aware memory gating achieved **{a_leak} failure leakage** and **{a_prec} verified experience precision** for standard task retrieval.",
         "  - *Source*: `minicode/memory_injector.py` and `minicode/experience.py`.",
         "",
         "- **Experience Deduplication**:",
@@ -652,13 +791,13 @@ def generate_resume_metrics(records: list[MetricRecord]) -> str:
         "### 4. Security Policy & Tamper-Evident Auditing",
         "",
         "- **Hard-Denial of Catastrophic Operations**:",
-        "  - *Baseline*: 33% block rate; destructive commands like `git reset --hard` were permitted in auto/bypass modes.",
-        "  - *Adaptive*: Achieved **100% block rate** for catastrophic commands and directory traversal attacks across all permission modes.",
+        f"  - *Baseline*: {b_block} block rate; destructive commands like `git reset --hard` were permitted in auto/bypass modes.",
+        f"  - *Adaptive*: Achieved **{a_block} block rate** for catastrophic commands and directory traversal attacks across all permission modes.",
         "  - *Source*: `minicode/security_policy.py` and `minicode/security_rules.py`.",
         "",
         "- **Sensitive Data Redaction & Tamper-Evident Audit**:",
-        "  - *Baseline*: 100% secret leakage on `.env` file reads; zero audit chain.",
-        "  - *Adaptive*: **0.0% secret leakage** via automated API key masking, and **100% audit log verification** via append-only SHA-256 cryptographic hash chaining.",
+        f"  - *Baseline*: {b_sleak} secret leakage on `.env` file reads; zero audit chain.",
+        f"  - *Adaptive*: **{a_sleak} secret leakage** via automated API key masking, and **100% audit log verification** via append-only SHA-256 cryptographic hash chaining.",
         "  - *Source*: `minicode/redaction.py` and `minicode/security_audit.py`.",
     ]
     return "\n".join(lines)
@@ -705,10 +844,14 @@ def main() -> int:
         print(f"Adaptive worker completed in {t_adapt:.2f}s (SHA: {adapt_results['commit_sha'][:7]})")
 
         print("Aggregating results and computing Category Matrix...")
-        records = build_comparison_matrix(base_results, adapt_results)
+        invalid_reasons: list[str] = []
+        records = build_comparison_matrix(base_results, adapt_results, invalid_reasons)
+        evaluation_valid = (len(invalid_reasons) == 0)
 
         full_results = {
             "provenance": provenance,
+            "evaluation_valid": evaluation_valid,
+            "invalid_reasons": invalid_reasons,
             "baseline": base_results,
             "adaptive": adapt_results,
             "metrics": [r.to_dict() for r in records],
@@ -729,6 +872,10 @@ def main() -> int:
         out_resume_path = Path(args.output_resume)
         out_resume_path.write_text(resume_report, encoding="utf-8")
         print(f"Saved: {out_resume_path}")
+
+        if not evaluation_valid:
+            print(f"WARNING: Evaluation marked INVALID due to: {invalid_reasons}")
+            return 1
 
         print("=== Final Evaluation Successfully Completed ===")
         return 0

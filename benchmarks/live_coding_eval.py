@@ -114,27 +114,40 @@ def main() -> int:
     parser.add_argument("--output", default="benchmarks/live_coding_eval_results.json", help="Output path")
     args = parser.parse_args()
 
+    out_file = Path(args.output)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+
     if not args.live:
         print("LIVE_EVAL_NOT_RUN: Live evaluation is opt-in. Pass --live to execute.")
+        report = {
+            "status": "LIVE_EVAL_NOT_RUN",
+            "reason": "Live evaluation is opt-in. Pass --live to execute.",
+            "tasks_evaluated": 0,
+            "results": [],
+        }
+        out_file.write_text(json.dumps(report, indent=2), encoding="utf-8")
         return 0
 
     has_key, key_name = check_api_keys()
     if not has_key:
         print("LIVE_EVAL_NOT_RUN: No provider API keys detected in environment.")
+        report = {
+            "status": "LIVE_EVAL_NOT_RUN",
+            "reason": "No provider API keys detected in environment.",
+            "tasks_evaluated": 0,
+            "results": [],
+        }
+        out_file.write_text(json.dumps(report, indent=2), encoding="utf-8")
         return 0
 
-    print(f"Running Live Model Evaluation with key from {key_name} on model {args.model}...")
-    # Framework for running 8 tasks in temporary git repos
+    print(f"Live evaluation requested for model {args.model} with key from {key_name}...")
     report = {
-        "status": "COMPLETED",
+        "status": "LIVE_EVAL_NOT_IMPLEMENTED",
         "model": args.model,
-        "tasks_evaluated": len(TASKS),
-        "note": "Small-sample live evaluation; not intended as statistical claim.",
+        "tasks_evaluated": 0,
+        "note": "Online live execution driver is not implemented for automated test harness to avoid unintended external API billing.",
         "results": [],
     }
-
-    out_file = Path(args.output)
-    out_file.parent.mkdir(parents=True, exist_ok=True)
     out_file.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"Live evaluation results saved to {out_file}")
     return 0
