@@ -375,29 +375,29 @@ class ToolRegistry:
                         )
                     return denial_res
 
-                if assessment.decision == SecurityDecision.ASK and assessment.approval_route == ApprovalRoute.GENERIC_TOOL:
-                    if context.permissions is None:
-                        fail_closed_res = ToolResult(
-                            ok=False,
-                            output=f"Security approval unavailable for '{tool_name}': permission manager missing",
-                            metadata={"security_decision": "DENY", "reasons": ["permission_manager_missing"]},
+                if assessment.decision == SecurityDecision.ASK and context.permissions is None:
+                    fail_closed_res = ToolResult(
+                        ok=False,
+                        output=f"Security approval unavailable for '{tool_name}': permission manager missing",
+                        metadata={"security_decision": "DENY", "reasons": ["permission_manager_missing"]},
+                    )
+                    if self.security_audit:
+                        self.security_audit.record_event(
+                            session_id=str(getattr(context, "session", "") or ""),
+                            actor=actor_str,
+                            agent_role=role,
+                            tool_name=tool_name,
+                            decision="DENY",
+                            risk=assessment.risk.value,
+                            rule_ids=["missing_permission_fail_closed"],
+                            reasons=["permission manager missing"],
+                            input_data=parsed,
+                            result_ok=False,
+                            output=fail_closed_res.output,
                         )
-                        if self.security_audit:
-                            self.security_audit.record_event(
-                                session_id=str(getattr(context, "session", "") or ""),
-                                actor=actor_str,
-                                agent_role=role,
-                                tool_name=tool_name,
-                                decision="DENY",
-                                risk=assessment.risk.value,
-                                rule_ids=["missing_permission_fail_closed"],
-                                reasons=["permission manager missing"],
-                                input_data=parsed,
-                                result_ok=False,
-                                output=fail_closed_res.output,
-                            )
-                        return fail_closed_res
+                    return fail_closed_res
 
+                if assessment.decision == SecurityDecision.ASK and assessment.approval_route == ApprovalRoute.GENERIC_TOOL:
                     try:
                         context.permissions.ensure_tool_action(
                             tool_name=tool_name,

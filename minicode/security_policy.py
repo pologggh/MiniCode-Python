@@ -19,7 +19,10 @@ from minicode.security_rules import (
     is_development_command,
     is_git_internal_metadata,
     is_pure_readonly_command,
+    is_workspace_root_path,
 )
+
+NATIVE_EDIT_TOOLS: frozenset[str] = frozenset({"write_file", "edit_file", "patch_file"})
 
 
 # ---------------------------------------------------------------------------
@@ -308,8 +311,9 @@ class SecurityPolicyEngine:
 
             for target in candidate_paths:
                 # Disallow modifying or deleting .git/ internal metadata
+                # Disallow modifying or deleting .git/ internal metadata
                 if category in {ToolCategory.LOCAL_WRITE, ToolCategory.DESTRUCTIVE_LOCAL}:
-                    if is_git_internal_metadata(target):
+                    if is_git_internal_metadata(target, cwd=request.cwd):
                         self.metrics.deny_count += 1
                         self.metrics.hard_denies += 1
                         self.metrics.sensitive_file_denies += 1
@@ -330,7 +334,7 @@ class SecurityPolicyEngine:
             # Prevent batch_delete of workspace root or .git
             if tool_name == "batch_delete":
                 del_path = str(request.input_data.get("path", "")).strip()
-                if del_path in {".", "./", "", "/"}:
+                if is_workspace_root_path(del_path, cwd=request.cwd):
                     self.metrics.deny_count += 1
                     self.metrics.hard_denies += 1
                     return SecurityAssessment(
@@ -340,7 +344,7 @@ class SecurityPolicyEngine:
                         reasons=["Deleting the workspace root itself is prohibited"],
                         hard_deny=True,
                     )
-                if is_git_internal_metadata(del_path):
+                if is_git_internal_metadata(del_path, cwd=request.cwd):
                     self.metrics.deny_count += 1
                     self.metrics.hard_denies += 1
                     return SecurityAssessment(
@@ -351,14 +355,53 @@ class SecurityPolicyEngine:
                         hard_deny=True,
                     )
 
+            # Prevent batch_move of workspace root or .git
+            if tool_name == "batch_move":
+                src_path = str(request.input_data.get("source", "")).strip()
+                dest_path = str(request.input_data.get("destination", "")).strip()
+                if is_workspace_root_path(src_path, cwd=request.cwd):
+                    self.metrics.deny_count += 1
+                    self.metrics.hard_denies += 1
+                    return SecurityAssessment(
+                        decision=SecurityDecision.DENY,
+                        risk=SecurityRisk.CRITICAL,
+                        rule_ids=["workspace_root_move_denied"],
+                        reasons=["Moving the workspace root itself is prohibited"],
+                        hard_deny=True,
+                    )
+                if is_git_internal_metadata(src_path, cwd=request.cwd) or is_git_internal_metadata(dest_path, cwd=request.cwd):
+                    self.metrics.deny_count += 1
+                    self.metrics.hard_denies += 1
+                    return SecurityAssessment(
+                        decision=SecurityDecision.DENY,
+                        risk=SecurityRisk.CRITICAL,
+                        rule_ids=["git_directory_move_denied"],
+                        reasons=["Moving .git directory or its metadata is prohibited"],
+                        hard_deny=True,
+                    )
+
+            # Prevent batch_copy of .git
+            if tool_name == "batch_copy":
+                src_path = str(request.input_data.get("source", "")).strip()
+                dest_path = str(request.input_data.get("destination", "")).strip()
+                if is_git_internal_metadata(src_path, cwd=request.cwd) or is_git_internal_metadata(dest_path, cwd=request.cwd):
+                    self.metrics.deny_count += 1
+                    self.metrics.hard_denies += 1
+                    return SecurityAssessment(
+                        decision=SecurityDecision.DENY,
+                        risk=SecurityRisk.CRITICAL,
+                        rule_ids=["git_directory_copy_denied"],
+                        reasons=["Copying .git directory or its metadata is prohibited"],
+                        hard_deny=True,
+                    )
+
         # ===================================================================
-        # 4. Sensitive File Read Policy
+        # 4. Sensitive File Read & Write Boundary Policy (Enforced even in BYPASS)
         # ===================================================================
-        if category == ToolCategory.LOCAL_READ and sensitive_paths:
-            # Sensitive file reads require explicit approval
-            rule_ids.append("sensitive_file_read_approval")
-            reasons.append(f"Sensitive configuration or key file access: {', '.join(sensitive_paths)}")
-            if mode != PermissionMode.BYPASS:
+        if sensitive_paths:
+            if category == ToolCategory.LOCAL_READ:
+                rule_ids.append("sensitive_file_read_approval")
+                reasons.append(f"Sensitive configuration or key file access requires approval: {', '.join(sensitive_paths)}")
                 self.metrics.ask_count += 1
                 return SecurityAssessment(
                     decision=SecurityDecision.ASK,
@@ -366,6 +409,19 @@ class SecurityPolicyEngine:
                     rule_ids=rule_ids,
                     reasons=reasons,
                     approval_route=ApprovalRoute.GENERIC_TOOL,
+                    sensitive_paths=sensitive_paths,
+                )
+            elif category in {ToolCategory.LOCAL_WRITE, ToolCategory.DESTRUCTIVE_LOCAL}:
+                rule_ids.append("sensitive_file_write_approval")
+                reasons.append(f"Modifying sensitive configuration or credentials requires approval: {', '.join(sensitive_paths)}")
+                self.metrics.ask_count += 1
+                route = ApprovalRoute.NATIVE_EDIT if tool_name in NATIVE_EDIT_TOOLS else ApprovalRoute.GENERIC_TOOL
+                return SecurityAssessment(
+                    decision=SecurityDecision.ASK,
+                    risk=SecurityRisk.HIGH,
+                    rule_ids=rule_ids,
+                    reasons=reasons,
+                    approval_route=route,
                     sensitive_paths=sensitive_paths,
                 )
 
@@ -407,7 +463,7 @@ class SecurityPolicyEngine:
                 hard_deny=False,
             )
 
-        # Mode: BYPASS (skips normal prompts, but preserves hard denies checked earlier)
+        # Mode: BYPASS (skips normal prompts, but preserves hard denies and sensitive boundaries)
         if mode == PermissionMode.BYPASS:
             self.metrics.allow_count += 1
             return SecurityAssessment(
@@ -448,19 +504,40 @@ class SecurityPolicyEngine:
 
         elif category == ToolCategory.LOCAL_WRITE:
             # write_file, edit_file, patch_file, batch_copy, batch_move
-            risk = SecurityRisk.MEDIUM
-            if mode == PermissionMode.AUTO:
-                # AUTO mode allows normal edits unless sensitive
-                if sensitive_paths:
-                    decision = SecurityDecision.ASK
-                    risk = SecurityRisk.HIGH
-                    route = ApprovalRoute.NATIVE_EDIT
+            if tool_name in NATIVE_EDIT_TOOLS:
+                if mode == PermissionMode.AUTO:
+                    if sensitive_paths:
+                        decision = SecurityDecision.ASK
+                        risk = SecurityRisk.HIGH
+                        route = ApprovalRoute.NATIVE_EDIT
+                        rule_ids.append("sensitive_file_write_approval")
+                        reasons.append(f"Modifying sensitive configuration or credentials requires approval: {', '.join(sensitive_paths)}")
+                    else:
+                        decision = SecurityDecision.ALLOW
+                        risk = SecurityRisk.LOW
+                        route = ApprovalRoute.NONE
                 else:
-                    decision = SecurityDecision.ALLOW
-                    route = ApprovalRoute.NONE
-            else:
+                    risk = SecurityRisk.HIGH if sensitive_paths else SecurityRisk.MEDIUM
+                    decision = SecurityDecision.ASK
+                    route = ApprovalRoute.NATIVE_EDIT
+                    rule_ids.append("local_edit_approval")
+                    reasons.append(f"File modification requires approval: '{tool_name}'")
+            elif tool_name == "batch_copy":
+                risk = SecurityRisk.MEDIUM
                 decision = SecurityDecision.ASK
-                route = ApprovalRoute.NATIVE_EDIT
+                route = ApprovalRoute.GENERIC_TOOL
+                rule_ids.append("batch_copy_approval")
+                reasons.append("batch_copy requires generic tool approval")
+            elif tool_name == "batch_move":
+                risk = SecurityRisk.HIGH
+                decision = SecurityDecision.ASK
+                route = ApprovalRoute.GENERIC_TOOL
+                rule_ids.append("batch_move_approval")
+                reasons.append("batch_move requires generic tool approval")
+            else:
+                risk = SecurityRisk.MEDIUM
+                decision = SecurityDecision.ASK
+                route = ApprovalRoute.GENERIC_TOOL
 
         elif category == ToolCategory.DESTRUCTIVE_LOCAL:
             # batch_delete
@@ -542,7 +619,7 @@ class SecurityPolicyEngine:
                 if category == ToolCategory.LOCAL_WRITE:
                     route = ApprovalRoute.NATIVE_EDIT
                 elif category == ToolCategory.EXECUTION:
-                    route = ApprovalRoute.NATIVE_COMMAND
+                    route = ApprovalRoute.GENERIC_TOOL
                 else:
                     route = ApprovalRoute.GENERIC_TOOL
 

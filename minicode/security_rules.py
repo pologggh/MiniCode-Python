@@ -101,8 +101,22 @@ def is_pure_readonly_command(command: str, args: Sequence[str] | None = None) ->
     if cmd_name not in READONLY_COMMANDS:
         return False
 
-    # If args contain redirection, pipe or dangerous modifiers, it's not pure read-only
     if args:
+        # Check sed in-place flag
+        if cmd_name == "sed":
+            for a in args:
+                a_str = str(a).strip()
+                if a_str in {"-i", "--in-place"} or a_str.startswith(("-i", "--in-place=")):
+                    return False
+
+        # Check find mutation flags
+        if cmd_name == "find":
+            for a in args:
+                a_str = str(a).strip().lower()
+                if a_str in {"-delete", "-exec", "-execdir", "-ok", "-okdir"}:
+                    return False
+
+        # If args contain redirection, pipe or dangerous shell control characters, not pure read-only
         for arg in args:
             if any(ch in str(arg) for ch in (">", "|", "&", ";")):
                 return False
@@ -117,21 +131,54 @@ def is_development_command(command: str) -> bool:
     return cmd_name in DEVELOPMENT_COMMANDS
 
 
-# ---------------------------------------------------------------------------
-# Sensitive Path Classification
-# ---------------------------------------------------------------------------
+def is_workspace_root_path(path: str | Path, cwd: str | Path | None = None) -> bool:
+    """Check if target path resolves to the workspace root itself."""
+    if not path:
+        return True
+    path_str = str(path).strip()
+    if path_str in {".", "./", "", "/"}:
+        return True
+    if cwd is None:
+        return False
+    try:
+        raw_p = Path(path)
+        candidate = raw_p if raw_p.is_absolute() else (Path(cwd) / raw_p)
+        return candidate.resolve() == Path(cwd).resolve()
+    except Exception:
+        return False
+
+
+def is_git_internal_metadata(path: str | Path, cwd: str | Path | None = None) -> bool:
+    """Check if path targets internal .git metadata (not tracked files like .gitignore)."""
+    if not path:
+        return False
+    raw_path = Path(path)
+    if not raw_path.is_absolute() and cwd:
+        candidate = Path(cwd) / raw_path
+    else:
+        candidate = raw_path
+
+    try:
+        resolved = candidate.resolve()
+    except Exception:
+        resolved = candidate
+
+    # Check both raw path parts and resolved path parts
+    for check_p in (raw_path, resolved):
+        parts = check_p.parts
+        for part in parts:
+            if part.lower() == ".git":
+                return True
+    return False
+
 
 _SENSITIVE_FILENAME_PATTERNS = [
-    # Environment configs containing credentials
     re.compile(r"^\.env(\..+)?$", re.IGNORECASE),
-    # Private keys and certificates
     re.compile(r"^.*\.(pem|key|pfx|p12|pkcs12)$", re.IGNORECASE),
     re.compile(r"^id_(rsa|ed25519|ecdsa|dsa)(\..+)?$", re.IGNORECASE),
-    # Common cloud & service credentials
     re.compile(r"^(credentials|service-account.*)\.json$", re.IGNORECASE),
     re.compile(r"^\.(npmrc|pypirc)$", re.IGNORECASE),
 ]
-
 _SENSITIVE_DIR_PATTERNS = [
     re.compile(r"(^|[/\\])\.aws([/\\]|$)", re.IGNORECASE),
     re.compile(r"(^|[/\\])\.gcp([/\\]|$)", re.IGNORECASE),
@@ -139,18 +186,6 @@ _SENSITIVE_DIR_PATTERNS = [
     re.compile(r"(^|[/\\])\.ssh([/\\]|$)", re.IGNORECASE),
     re.compile(r"(^|[/\\])\.docker([/\\]config\.json)?$", re.IGNORECASE),
 ]
-
-
-def is_git_internal_metadata(path: str | Path) -> bool:
-    """Check if path targets internal .git metadata (not tracked files like .gitignore)."""
-    p = Path(path)
-    parts = p.parts
-    # Exact check for .git directory or files inside .git
-    for i, part in enumerate(parts):
-        if part.lower() == ".git":
-            # If it's the .git directory itself or something inside it
-            return True
-    return False
 
 
 def classify_sensitive_path(target_path: str | Path, cwd: str | Path | None = None) -> tuple[bool, str]:
