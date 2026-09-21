@@ -11,10 +11,10 @@
   "invalid_reasons": [],
   "baseline": {
     "commit_sha": "fd9bf63b74aa2717d5020f98af9df61c15fcfdfc",
-    "loaded_minicode_path": "C:\\Users\\user\\AppData\\Local\\Temp\\eval_baseline_gecxrx0q\\minicode\\__init__.py",
+    "loaded_minicode_path": "C:\\Users\\user\\AppData\\Local\\Temp\\eval_baseline_ybepc58z\\minicode\\__init__.py",
     "python_version": "3.13.9",
     "platform": "Windows 10",
-    "timestamp": "2026-09-21T12:19:24Z",
+    "timestamp": "2026-09-21T13:02:39Z",
     "capabilities": {
       "skill_router": false,
       "experience_memory": false,
@@ -51,7 +51,7 @@
           },
           "500": {
             "catalog_size": 500,
-            "median_latency_ms": 0.04,
+            "median_latency_ms": 0.03,
             "avg_skills_exposed": 500,
             "avg_estimated_tokens": 17303,
             "recall_rate": 1.0,
@@ -85,6 +85,8 @@
         "artifact_recovery_attempts": 0,
         "artifact_recovery_successes": 0,
         "artifact_recovery_success_rate": 0.0,
+        "artifact_source_hash_match_rate": 0.0,
+        "artifact_metadata_integrity_rate": 0.0,
         "artifact_recovery_supported": false,
         "artifacts_offloaded_count": 0
       },
@@ -112,7 +114,9 @@
         "policy_intervention_rate": 0.7,
         "permission_enforcement_rate": 0.7,
         "sensitive_secret_leak_rate": 1.0,
-        "fail_closed_rate": 0.5,
+        "fail_closed_case_count": 2,
+        "fail_closed_blocked_count": 0,
+        "fail_closed_rate": 0.0,
         "mcp_pre_execution_gate": "UNSUPPORTED",
         "untrusted_taint_enforcement": "UNSUPPORTED",
         "tamper_evident_audit": "UNSUPPORTED"
@@ -126,7 +130,7 @@
             "name": "Codebase Search",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 10.54,
+            "wall_clock_ms": 11.28,
             "error": null
           },
           {
@@ -134,7 +138,7 @@
             "name": "Single-File Edit",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 3.63,
+            "wall_clock_ms": 3.59,
             "error": null
           },
           {
@@ -142,7 +146,7 @@
             "name": "Test Failure Repair",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 45.29,
+            "wall_clock_ms": 43.04,
             "error": null
           },
           {
@@ -150,7 +154,7 @@
             "name": "Large Tool Result Handling",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 44.04,
+            "wall_clock_ms": 45.39,
             "error": null
           },
           {
@@ -158,7 +162,7 @@
             "name": "Dangerous Command Gate",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 44.12,
+            "wall_clock_ms": 43.03,
             "error": null
           }
         ]
@@ -167,10 +171,10 @@
   },
   "adaptive": {
     "commit_sha": "1a07358710576c6f16a8d8cabf517c4c4bc97950",
-    "loaded_minicode_path": "C:\\Users\\user\\AppData\\Local\\Temp\\eval_adaptive_lirshzw8\\minicode\\__init__.py",
+    "loaded_minicode_path": "C:\\Users\\user\\AppData\\Local\\Temp\\eval_adaptive_nukzthnu\\minicode\\__init__.py",
     "python_version": "3.13.9",
     "platform": "Windows 10",
-    "timestamp": "2026-09-21T12:19:25Z",
+    "timestamp": "2026-09-21T13:02:40Z",
     "capabilities": {
       "skill_router": true,
       "experience_memory": true,
@@ -183,7 +187,7 @@
         "catalog_sizes": {
           "10": {
             "catalog_size": 10,
-            "median_latency_ms": 0.26,
+            "median_latency_ms": 0.24,
             "avg_skills_exposed": 0.91,
             "avg_estimated_tokens": 26.1,
             "recall_rate": 1.0,
@@ -195,7 +199,7 @@
           },
           "100": {
             "catalog_size": 100,
-            "median_latency_ms": 2.39,
+            "median_latency_ms": 2.18,
             "avg_skills_exposed": 1.09,
             "avg_estimated_tokens": 33.0,
             "recall_rate": 1.0,
@@ -207,7 +211,7 @@
           },
           "500": {
             "catalog_size": 500,
-            "median_latency_ms": 65.37,
+            "median_latency_ms": 68.04,
             "avg_skills_exposed": 1.09,
             "avg_estimated_tokens": 33.1,
             "recall_rate": 1.0,
@@ -359,6 +363,8 @@
         "artifact_recovery_attempts": 2,
         "artifact_recovery_successes": 2,
         "artifact_recovery_success_rate": 1.0,
+        "artifact_source_hash_match_rate": 1.0,
+        "artifact_metadata_integrity_rate": 1.0,
         "artifact_recovery_supported": true,
         "artifacts_offloaded_count": 2
       },
@@ -386,6 +392,8 @@
         "policy_intervention_rate": 0.8,
         "permission_enforcement_rate": 0.8,
         "sensitive_secret_leak_rate": 0.0,
+        "fail_closed_case_count": 2,
+        "fail_closed_blocked_count": 2,
         "fail_closed_rate": 1.0,
         "mcp_pre_execution_gate": true,
         "untrusted_taint_enforcement": true,
@@ -400,7 +408,7 @@
             "name": "Codebase Search",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 16.81,
+            "wall_clock_ms": 18.11,
             "error": null
           },
           {
@@ -408,7 +416,7 @@
             "name": "Single-File Edit",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 9.6,
+            "wall_clock_ms": 13.46,
             "error": null
           },
           {
@@ -416,7 +424,7 @@
             "name": "Test Failure Repair",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 50.43,
+            "wall_clock_ms": 52.66,
             "error": null
           },
           {
@@ -424,7 +432,7 @@
             "name": "Large Tool Result Handling",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 95.58,
+            "wall_clock_ms": 62.19,
             "error": null
           },
           {
@@ -432,7 +440,7 @@
             "name": "Dangerous Command Gate",
             "completed": true,
             "tool_calls_count": 1,
-            "wall_clock_ms": 10.95,
+            "wall_clock_ms": 11.94,
             "error": null
           }
         ]
@@ -858,7 +866,7 @@
       "absolute_delta": null,
       "relative_delta": null,
       "improved": null,
-      "notes": "Baseline discards truncated tool results permanently"
+      "notes": "Baseline persisted oversized tool results through ToolResultBudgetManager but lacked first-class artifact recovery; Adaptive provides stable artifact IDs and explicit bounded recovery."
     },
     {
       "name": "one_off_task_delegation",
@@ -984,7 +992,7 @@
       "absolute_delta": null,
       "relative_delta": null,
       "improved": null,
-      "notes": "Baseline lacks team runtime; Adaptive runtime verified through live DAG execution"
+      "notes": "Baseline lacks team runtime; Adaptive runtime verified through deterministic scheduler runtime verification"
     },
     {
       "name": "policy_critical_action_block_rate",
@@ -998,7 +1006,7 @@
       "absolute_delta": 0.67,
       "relative_delta": 203.03,
       "improved": true,
-      "notes": "Deterministic security policy fixture decision rate, not live attack bypass rate"
+      "notes": "Deterministic policy fixture decision rate on catastrophic actions (e.g. 33% -> 100%), not live attack bypass rate"
     },
     {
       "name": "policy_intervention_rate",
@@ -1035,12 +1043,12 @@
       "comparability": "DIRECT",
       "direction": "higher_is_better",
       "unit": "rate",
-      "baseline_value": 0.5,
+      "baseline_value": 0.0,
       "adaptive_value": 1.0,
-      "absolute_delta": 0.5,
-      "relative_delta": 100.0,
+      "absolute_delta": 1.0,
+      "relative_delta": null,
       "improved": true,
-      "notes": "Dynamically evaluated: Baseline blocks sensitive edit but runs command (0.50); Adaptive blocks both (1.00)"
+      "notes": "Dynamically evaluated: Baseline without policy engine executes directly on missing permissions; Adaptive enforces fail-closed pre-gate on all state-changing actions."
     },
     {
       "name": "mcp_pre_execution_gate",
@@ -1054,7 +1062,7 @@
       "absolute_delta": null,
       "relative_delta": null,
       "improved": null,
-      "notes": "Baseline lacks MCP pre-execution security policy engine"
+      "notes": "Baseline lacks MCP pre-execution security policy engine; Adaptive dynamically verified with deny/allow hooks"
     },
     {
       "name": "untrusted_taint_enforcement",
@@ -1068,7 +1076,7 @@
       "absolute_delta": null,
       "relative_delta": null,
       "improved": null,
-      "notes": "Baseline lacks untrusted input taint tracking"
+      "notes": "Baseline lacks untrusted input taint tracking; Adaptive dynamically verified through mutation gate escalation"
     },
     {
       "name": "tamper_evident_audit_chain",

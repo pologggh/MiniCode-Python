@@ -11,6 +11,7 @@ import pytest
 
 from benchmarks.final_eval.fixtures import (
     COMMON_RUNTIME_TASKS,
+    CONTEXT_EXPECTED_ARTIFACT_HASHES,
     EXPERIENCE_FIXTURES,
     MEMORY_EVAL_QUERIES,
     SECURITY_EVAL_FIXTURES,
@@ -434,13 +435,16 @@ def test_multi_agent_parent_isolation():
 
 
 def test_security_fail_closed_cases():
-    """Verify fail-closed evaluation across scenarios with permissions=None (Baseline 0.50, Adaptive 1.00)."""
+    """Verify fail-closed evaluation across scenarios with permissions=None is case-derived."""
     repo_dir = str(Path.cwd())
     adapt_sec = run_security_benchmark({"security_policy": True}, repo_dir)
     base_sec = run_security_benchmark({"security_policy": False}, repo_dir)
 
-    assert adapt_sec["fail_closed_rate"] == 1.00
-    assert base_sec["fail_closed_rate"] == 0.50
+    assert adapt_sec["fail_closed_case_count"] >= 2
+    assert base_sec["fail_closed_case_count"] >= 2
+    assert adapt_sec["fail_closed_rate"] == round(adapt_sec["fail_closed_blocked_count"] / adapt_sec["fail_closed_case_count"], 2)
+    assert base_sec["fail_closed_rate"] == round(base_sec["fail_closed_blocked_count"] / base_sec["fail_closed_case_count"], 2)
+    assert adapt_sec["fail_closed_rate"] > base_sec["fail_closed_rate"]
 
 
 def test_security_mcp_taint_adaptive_only():
@@ -529,6 +533,8 @@ def test_deprecated_metrics_handled():
                 "budget_compliance": True,
                 "artifact_recovery_supported": False,
                 "artifact_recovery_success_rate": 0.0,
+                "artifact_source_hash_match_rate": 0.0,
+                "artifact_metadata_integrity_rate": 0.0,
             },
             "multi_agent": {
                 "one_off_task_delegation": True,
@@ -537,7 +543,9 @@ def test_deprecated_metrics_handled():
                 "policy_critical_action_block_rate": 0.0,
                 "policy_intervention_rate": 0.5,
                 "sensitive_secret_leak_rate": 1.0,
-                "fail_closed_rate": 0.5,
+                "fail_closed_case_count": 2,
+                "fail_closed_blocked_count": 0,
+                "fail_closed_rate": 0.0,
             },
             "runtime_tasks": {
                 "all_tasks_completed": True,
@@ -578,6 +586,8 @@ def test_deprecated_metrics_handled():
                 "budget_compliance": True,
                 "artifact_recovery_supported": True,
                 "artifact_recovery_success_rate": 1.0,
+                "artifact_source_hash_match_rate": 1.0,
+                "artifact_metadata_integrity_rate": 1.0,
             },
             "multi_agent": {
                 "one_off_task_delegation": True,
@@ -601,6 +611,8 @@ def test_deprecated_metrics_handled():
                 "policy_critical_action_block_rate": 1.0,
                 "policy_intervention_rate": 1.0,
                 "sensitive_secret_leak_rate": 0.0,
+                "fail_closed_case_count": 2,
+                "fail_closed_blocked_count": 2,
                 "fail_closed_rate": 1.0,
                 "mcp_pre_execution_gate": True,
                 "untrusted_taint_enforcement": True,
@@ -621,6 +633,138 @@ def test_deprecated_metrics_handled():
     # New standardized metric names should be present
     assert "policy_critical_action_block_rate" in metric_names
     assert "skill_exposure_micro_precision_100" in metric_names
+
+
+def test_fail_closed_rate_is_case_derived():
+    """Verify fail_closed_rate is derived from actual case outcomes (blocked / cases)."""
+    repo_dir = str(Path.cwd())
+    adapt_sec = run_security_benchmark({"security_policy": True}, repo_dir)
+    base_sec = run_security_benchmark({"security_policy": False}, repo_dir)
+
+    assert "fail_closed_case_count" in adapt_sec
+    assert "fail_closed_blocked_count" in adapt_sec
+    assert "fail_closed_rate" in adapt_sec
+
+    assert adapt_sec["fail_closed_case_count"] >= 2
+    expected_adapt = round(adapt_sec["fail_closed_blocked_count"] / adapt_sec["fail_closed_case_count"], 2)
+    assert adapt_sec["fail_closed_rate"] == expected_adapt
+
+    assert base_sec["fail_closed_case_count"] >= 2
+    expected_base = round(base_sec["fail_closed_blocked_count"] / base_sec["fail_closed_case_count"], 2)
+    assert base_sec["fail_closed_rate"] == expected_base
+
+
+def test_baseline_context_legacy_persistence_documented():
+    """Verify reports accurately document baseline's ToolResultBudgetManager legacy persistence."""
+    base_data = {
+        "commit_sha": BASELINE_COMMIT,
+        "loaded_minicode_path": "minicode",
+        "categories": {
+            "skill_routing": {"catalog_sizes": {sz: {"recall_rate": 1.0, "avg_estimated_tokens": 10, "avg_skills_exposed": 1, "skill_exposure_micro_precision": 1.0, "avg_irrelevant_skills_exposed": 0, "unrelated_query_exposure_count": 0} for sz in ["10", "100", "500"]}, "edge_cases": {"high_priority_unrelated_suppressed": True}},
+            "experience_memory": {"normal_failure_leakage": 0.0, "verified_retrieval_precision": 1.0, "dedup_behavior": False, "metadata_preservation": False},
+            "context_runtime": {"estimated_context_tokens": 500, "critical_retention": True, "stable_task_retention": True, "latest_verification_retention": True, "budget_limit": 6000, "budget_compliance": True, "artifact_recovery_supported": False, "artifact_recovery_success_rate": 0.0, "artifact_source_hash_match_rate": 0.0, "artifact_metadata_integrity_rate": 0.0},
+            "multi_agent": {"one_off_task_delegation": True},
+            "security": {"policy_critical_action_block_rate": 0.33, "policy_intervention_rate": 0.5, "sensitive_secret_leak_rate": 1.0, "fail_closed_case_count": 2, "fail_closed_blocked_count": 0, "fail_closed_rate": 0.0},
+            "runtime_tasks": {"all_tasks_completed": True},
+        },
+    }
+    adapt_data = {
+        "commit_sha": ADAPTIVE_COMMIT,
+        "loaded_minicode_path": "minicode",
+        "categories": {
+            "skill_routing": {"catalog_sizes": {sz: {"recall_rate": 1.0, "avg_estimated_tokens": 10, "avg_skills_exposed": 1, "skill_exposure_micro_precision": 1.0, "avg_irrelevant_skills_exposed": 0, "unrelated_query_exposure_count": 0} for sz in ["10", "100", "500"]}, "edge_cases": {"high_priority_unrelated_suppressed": True}},
+            "experience_memory": {"normal_failure_leakage": 0.0, "verified_retrieval_precision": 1.0, "failure_recovery_recall": 1.0, "dedup_behavior": True, "metadata_preservation": True},
+            "context_runtime": {"estimated_context_tokens": 700, "critical_retention": True, "stable_task_retention": True, "latest_verification_retention": True, "budget_limit": 6000, "budget_compliance": True, "artifact_recovery_supported": True, "artifact_recovery_success_rate": 1.0, "artifact_source_hash_match_rate": 1.0, "artifact_metadata_integrity_rate": 1.0},
+            "multi_agent": {"one_off_task_delegation": True, "centralized_multi_agent": True, "dag_dependency_execution": True, "sibling_concurrency": True, "writer_serialization": True, "role_quality_gates": True, "bounded_replan": True, "parent_context_isolation": True, "concurrency_verified": True, "dag_dependency_verified": True, "test_gate_verified": True, "review_gate_verified": True, "writer_concurrency_verified": True, "replan_verified": True, "parent_isolation_verified": True, "runtime_verified": True},
+            "security": {"policy_critical_action_block_rate": 1.0, "policy_intervention_rate": 1.0, "sensitive_secret_leak_rate": 0.0, "fail_closed_case_count": 2, "fail_closed_blocked_count": 2, "fail_closed_rate": 1.0, "mcp_pre_execution_gate": True, "untrusted_taint_enforcement": True, "tamper_evident_audit": True},
+            "runtime_tasks": {"all_tasks_completed": True},
+        },
+    }
+    invalid_reasons: list[str] = []
+    matrix = build_comparison_matrix(base_data, adapt_data, invalid_reasons)
+    assert len(invalid_reasons) == 0
+
+    provenance = {"baseline_commit": BASELINE_COMMIT, "adaptive_commit": ADAPTIVE_COMMIT, "phase1_merge_sha": "f3d8d7a", "phase1_parent_baseline": BASELINE_COMMIT, "phase1_parent_feature": "0db89b1"}
+    md = generate_markdown_report(provenance, base_data, adapt_data, matrix)
+    resume = generate_resume_metrics(matrix)
+
+    # Must document ToolResultBudgetManager legacy persistence
+    assert "ToolResultBudgetManager" in md
+    assert "Legacy Large Tool Result Persistence" in md
+    assert "ToolResultBudgetManager" in resume
+    assert "lacked a first-class artifact recovery interface" in resume
+    assert "zero disk persistence" not in md
+    assert "permanently discards" not in md
+
+
+def test_artifact_source_hash_exact_match():
+    """Verify artifact recovery strictly requires matching CONTEXT_EXPECTED_ARTIFACT_HASHES."""
+    caps_adapt = {"context_budget": True}
+    res = run_context_runtime_benchmark(caps_adapt)
+
+    assert res["artifact_recovery_supported"] is True
+    assert res["artifact_source_hash_match_rate"] == 1.0
+    assert res["artifact_metadata_integrity_rate"] == 1.0
+    assert res["artifact_recovery_successes"] == len(CONTEXT_EXPECTED_ARTIFACT_HASHES)
+
+
+def test_self_consistent_wrong_artifact_not_counted():
+    """Verify that an artifact with self-consistent metadata but incorrect source hash is not counted."""
+    from minicode.context_artifacts import ContextArtifactStore
+    import hashlib
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="test_wrong_art_"))
+    try:
+        store = ContextArtifactStore(workspace=temp_dir)
+        fake_content = "Corrupted or non-fixture content that should never match source hashes"
+        meta = store.persist(fake_content, tool_name="test_tool")
+
+        # The store metadata is self-consistent
+        read_back = store.read(meta.artifact_id)
+        rec_hash = hashlib.sha256(read_back.encode("utf-8")).hexdigest()
+        assert rec_hash == meta.sha256
+
+        # But it is NOT in CONTEXT_EXPECTED_ARTIFACT_HASHES
+        assert rec_hash not in CONTEXT_EXPECTED_ARTIFACT_HASHES
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_mcp_verified_not_hardcoded():
+    """Verify mcp_pre_execution_gate dynamically executes tool and verifies call_count."""
+    repo_dir = str(Path.cwd())
+    adapt_sec = run_security_benchmark({"security_policy": True}, repo_dir)
+    assert adapt_sec["mcp_pre_execution_gate"] is True
+
+    base_sec = run_security_benchmark({"security_policy": False}, repo_dir)
+    assert base_sec["mcp_pre_execution_gate"] == "UNSUPPORTED"
+
+
+def test_taint_verified_through_mutation_gate():
+    """Verify untrusted_taint_enforcement dynamically exercises the mutation gate in BYPASS mode."""
+    repo_dir = str(Path.cwd())
+    adapt_sec = run_security_benchmark({"security_policy": True}, repo_dir)
+    assert adapt_sec["untrusted_taint_enforcement"] is True
+
+    base_sec = run_security_benchmark({"security_policy": False}, repo_dir)
+    assert base_sec["untrusted_taint_enforcement"] == "UNSUPPORTED"
+
+
+def test_security_resume_claim_scope():
+    """Verify security block rate claim is strictly scoped to deterministic policy fixture."""
+    rec = compute_metric(
+        name="policy_critical_action_block_rate",
+        category="Security Policy",
+        description="Deterministic policy fixture block rate for catastrophic actions",
+        comparability=Comparability.DIRECT,
+        direction=MetricDirection.HIGHER_IS_BETTER,
+        unit="rate",
+        baseline_val=0.33,
+        adaptive_val=1.0,
+    )
+    resume = generate_resume_metrics([rec])
+    assert "deterministic policy-fixture block rate" in resume
+    assert "across all permission modes" not in resume
 
 
 def test_require_metric_missing_fails():

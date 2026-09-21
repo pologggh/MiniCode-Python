@@ -138,8 +138,9 @@ def build_comparison_matrix(
     # 3. Artifact recovery SHA-256 hash 100% match verification
     adapt_rec_supp = require_metric(adapt_data, "categories.context_runtime.artifact_recovery_supported", invalid_reasons)
     adapt_rec_rate = require_metric(adapt_data, "categories.context_runtime.artifact_recovery_success_rate", invalid_reasons)
-    if adapt_rec_rate != 1.0 or not adapt_rec_supp:
-        invalid_reasons.append(f"Adaptive context artifact recovery SHA-256 hash match rate must be 1.0 (got {adapt_rec_rate})")
+    adapt_src_hash_rate = require_metric(adapt_data, "categories.context_runtime.artifact_source_hash_match_rate", invalid_reasons)
+    if adapt_rec_rate != 1.0 or not adapt_rec_supp or adapt_src_hash_rate != 1.0:
+        invalid_reasons.append(f"Adaptive context artifact recovery SHA-256 hash match rate must be 1.0 (got rate={adapt_rec_rate}, src_rate={adapt_src_hash_rate})")
 
     # 4. Multi-agent runtime verification points
     for ma_key in [
@@ -156,7 +157,37 @@ def build_comparison_matrix(
         if ma_val is not True:
             invalid_reasons.append(f"Adaptive multi-agent verification failed: '{ma_key}' is not True")
 
-    # 5. Common runtime tasks completion verification
+    # 5. Security fail-closed dynamic derivation validation
+    adapt_fc_cases = require_metric(adapt_data, "categories.security.fail_closed_case_count", invalid_reasons)
+    adapt_fc_blocked = require_metric(adapt_data, "categories.security.fail_closed_blocked_count", invalid_reasons)
+    adapt_fc_rate = require_metric(adapt_data, "categories.security.fail_closed_rate", invalid_reasons)
+    if adapt_fc_cases is not None and adapt_fc_blocked is not None and adapt_fc_rate is not None:
+        if adapt_fc_cases < 2:
+            invalid_reasons.append(f"Adaptive fail_closed_case_count must be >= 2 (got {adapt_fc_cases})")
+        expected_rate = round(adapt_fc_blocked / adapt_fc_cases, 2)
+        if adapt_fc_rate != expected_rate:
+            invalid_reasons.append(f"Adaptive fail_closed_rate ({adapt_fc_rate}) must equal blocked_count / case_count ({expected_rate})")
+
+    base_fc_cases = require_metric(base_data, "categories.security.fail_closed_case_count", invalid_reasons)
+    base_fc_blocked = require_metric(base_data, "categories.security.fail_closed_blocked_count", invalid_reasons)
+    base_fc_rate = require_metric(base_data, "categories.security.fail_closed_rate", invalid_reasons)
+    if base_fc_cases is not None and base_fc_blocked is not None and base_fc_rate is not None:
+        if base_fc_cases < 2:
+            invalid_reasons.append(f"Baseline fail_closed_case_count must be >= 2 (got {base_fc_cases})")
+        expected_base_rate = round(base_fc_blocked / base_fc_cases, 2)
+        if base_fc_rate != expected_base_rate:
+            invalid_reasons.append(f"Baseline fail_closed_rate ({base_fc_rate}) must equal blocked_count / case_count ({expected_base_rate})")
+
+    # 6. Security MCP and Untrusted Taint dynamic verification
+    adapt_mcp_val = require_metric(adapt_data, "categories.security.mcp_pre_execution_gate", invalid_reasons)
+    if adapt_mcp_val is not True:
+        invalid_reasons.append(f"Adaptive mcp_pre_execution_gate must be True (got {adapt_mcp_val})")
+
+    adapt_taint_val = require_metric(adapt_data, "categories.security.untrusted_taint_enforcement", invalid_reasons)
+    if adapt_taint_val is not True:
+        invalid_reasons.append(f"Adaptive untrusted_taint_enforcement must be True (got {adapt_taint_val})")
+
+    # 7. Common runtime tasks completion verification
     base_rt_all = require_metric(base_data, "categories.runtime_tasks.all_tasks_completed", invalid_reasons)
     adapt_rt_all = require_metric(adapt_data, "categories.runtime_tasks.all_tasks_completed", invalid_reasons)
     if base_rt_all is not True:
@@ -417,7 +448,7 @@ def build_comparison_matrix(
         unit="boolean",
         baseline_val="UNSUPPORTED",
         adaptive_val=a_rec_supp,
-        notes="Baseline discards truncated tool results permanently",
+        notes="Baseline persisted oversized tool results through ToolResultBudgetManager but lacked first-class artifact recovery; Adaptive provides stable artifact IDs and explicit bounded recovery.",
     ))
 
     # Category D: Multi-Agent Runtime
@@ -521,7 +552,7 @@ def build_comparison_matrix(
         unit="boolean",
         baseline_val="UNSUPPORTED",
         adaptive_val="VERIFIED" if require_metric(adapt_data, "categories.multi_agent.runtime_verified", invalid_reasons) else "FAILED",
-        notes="Baseline lacks team runtime; Adaptive runtime verified through live DAG execution",
+        notes="Baseline lacks team runtime; Adaptive runtime verified through deterministic scheduler runtime verification",
     ))
 
     # Category E: Security Policy
@@ -536,7 +567,7 @@ def build_comparison_matrix(
         unit="rate",
         baseline_val=b_block,
         adaptive_val=a_block,
-        notes="Deterministic security policy fixture decision rate, not live attack bypass rate",
+        notes="Deterministic policy fixture decision rate on catastrophic actions (e.g. 33% -> 100%), not live attack bypass rate",
     ))
 
     b_interv = require_metric(base_data, "categories.security.policy_intervention_rate", invalid_reasons)
@@ -578,7 +609,7 @@ def build_comparison_matrix(
         unit="rate",
         baseline_val=b_fc,
         adaptive_val=a_fc,
-        notes="Dynamically evaluated: Baseline blocks sensitive edit but runs command (0.50); Adaptive blocks both (1.00)",
+        notes="Dynamically evaluated: Baseline without policy engine executes directly on missing permissions; Adaptive enforces fail-closed pre-gate on all state-changing actions.",
     ))
 
     records.append(compute_metric(
@@ -590,7 +621,7 @@ def build_comparison_matrix(
         unit="boolean",
         baseline_val="UNSUPPORTED",
         adaptive_val="VERIFIED" if require_metric(adapt_data, "categories.security.mcp_pre_execution_gate", invalid_reasons) else "FAILED",
-        notes="Baseline lacks MCP pre-execution security policy engine",
+        notes="Baseline lacks MCP pre-execution security policy engine; Adaptive dynamically verified with deny/allow hooks",
     ))
 
     records.append(compute_metric(
@@ -602,7 +633,7 @@ def build_comparison_matrix(
         unit="boolean",
         baseline_val="UNSUPPORTED",
         adaptive_val="VERIFIED" if require_metric(adapt_data, "categories.security.untrusted_taint_enforcement", invalid_reasons) else "FAILED",
-        notes="Baseline lacks untrusted input taint tracking",
+        notes="Baseline lacks untrusted input taint tracking; Adaptive dynamically verified through mutation gate escalation",
     ))
 
     records.append(compute_metric(
@@ -704,12 +735,13 @@ def generate_markdown_report(
         "| :--- | :--- | :--- | :--- |",
         "| Agent Loop & Tool Dispatch | Supported | Supported | Pre-existing |",
         "| Session & Working Memory | Supported | Supported | Pre-existing |",
+        "| Legacy Large Tool Result Persistence | Supported (`ToolResultBudgetManager`) | Supported (`ToolResultBudgetManager`) | Pre-existing |",
         "| Single Task Sub-Agent | Supported (`task_tool`) | Supported | Pre-existing |",
         "| Basic Permission Manager | Supported (`PermissionManager`) | Supported | Pre-existing |",
         "| Adaptive Skill Routing | **UNSUPPORTED** (Dumps all skills) | **SUPPORTED** (`SkillRouter`) | Phase 1 |",
         "| Structured Experience Memory | **UNSUPPORTED** (Unstructured text) | **SUPPORTED** (`StructuredExperienceMemory`) | Phase 2 |",
         "| Dynamic Context Budgeting | **UNSUPPORTED** (Reactive compactor) | **SUPPORTED** (`ContextBudgetManager`) | Phase 3 |",
-        "| Recoverable Context Artifacts | **UNSUPPORTED** (Discarded) | **SUPPORTED** (`ContextArtifactStore`) | Phase 3 |",
+        "| First-class Recoverable Context Artifact | **UNSUPPORTED / PARTIAL** (Lacked stable IDs, range retrieval API, and load tool) | **SUPPORTED** (`ContextArtifactStore`) | Phase 3 |",
         "| Centralized Multi-Agent Team | **UNSUPPORTED** (One-off only) | **SUPPORTED** (`AgentTeamOrchestrator`) | Phase 4 |",
         "| DAG & Quality Gates | **UNSUPPORTED** | **SUPPORTED** (TestGate & ReviewGate) | Phase 4 |",
         "| Central Security Policy Engine | **UNSUPPORTED** | **SUPPORTED** (`SecurityPolicyEngine`) | Phase 5 |",
@@ -750,16 +782,16 @@ def generate_markdown_report(
         f"2. **Skill Exposure Micro Precision (100 Skills)**: Improved from **{b_sp_100}** in baseline to **{a_sp_100}** in Adaptive. Irrelevant skills exposed per task dropped from **{b_si_100}** to **{a_si_100}**.",
         f"3. **Normal Experience Retrieval Failure Leakage**: Eliminated from **{b_leak}** in baseline text search to **{a_leak}** in Adaptive through outcome-aware filtering.",
         f"4. **Verified Experience Precision**: Reached **{a_prec}** precision in Adaptive retrieval compared to **{b_prec}** unverified keyword matches in baseline.",
-        f"5. **Deterministic Policy Block Rate**: Improved from **{b_block}** in baseline to **{a_block}** in Adaptive, which enforces hard denials on destructive commands (`git reset --hard`, `rm -rf`) even in `BYPASS` mode.",
+        f"5. **Deterministic Policy Block Rate**: Improved from **{b_block}** in baseline to **{a_block}** in Adaptive on the deterministic policy fixture, which enforces hard denials on destructive commands (`git reset --hard`, `rm -rf`).",
         f"6. **Sensitive Secret Leak Rate**: Reduced from **{b_sleak}** raw leakage on `.env` read to **{a_sleak}** via automatic secret redaction (`[REDACTED]`).",
-        "7. **Context Token Footprint & Budget Compliance**: Adaptive includes structured context metadata and recoverable artifact references, resulting in baseline per-turn prompt overhead slightly higher than plain text (743 vs 512 tokens, +45.1%). However, under heavy context pressure with large tool outputs (12k tokens), Adaptive guarantees 100% compliance with the identical 6,000 token budget limit via artifact offloading with 100% hash-verified recovery, whereas Baseline truncates permanently with zero artifact recovery.",
+        "7. **Context Token Footprint & Budget Compliance**: Adaptive includes structured context metadata and recoverable artifact references, resulting in baseline per-turn prompt overhead slightly higher than plain text (743 vs 512 tokens, +45.1%). However, under heavy context pressure with large tool outputs (12k tokens), Adaptive guarantees 100% compliance with the identical 6,000 token budget limit via artifact offloading with 100% hash-verified recovery, whereas Baseline persisted oversized tool results through the existing ToolResultBudgetManager but lacked a first-class artifact recovery interface.",
         "",
         "## Adaptive-Only Capabilities",
         "",
         "Capabilities completely absent in Original MiniCode (baseline marked as `UNSUPPORTED`):",
         "",
-        "- **Recoverable Context Artifacts**: Large tool outputs (e.g. 12k token test traces) are offloaded to disk artifacts with deterministic reference pointers, allowing on-demand range retrieval rather than permanent truncation.",
-        "- **Centralized Agent Team Orchestration**: Automated multi-role decomposition (Researcher, Coder, Tester, Reviewer) executed via a topological DAG with sibling concurrency and writer serialization.",
+        "- **First-class Recoverable Context Artifacts**: While baseline possessed legacy disk persistence for tool outputs via `ToolResultBudgetManager`, Adaptive introduced first-class recoverable context artifacts with deterministic IDs (`ctx_*`), structured metadata, range retrieval, and load tools, verified with 100% SHA-256 hash match.",
+        "- **Centralized Agent Team Orchestration**: Automated multi-role decomposition (Researcher, Coder, Tester, Reviewer) executed via a topological DAG with sibling concurrency and writer serialization under deterministic scheduler runtime verification.",
         "- **Role Quality Gates**: Automated validation ensuring that code modifications cannot merge without passing test evidence (TestGate) and structured reviewer sign-off (ReviewGate).",
         "- **Tamper-Evident Security Audit Log**: Every tool execution is recorded in an append-only JSONL log with cryptographic SHA-256 hash chaining, verified via `verify_chain()`.",
         "- **Untrusted Content Taint Enforcement**: External tool results (e.g. web fetch, MCP outputs) are scanned for prompt injection attacks and wrapped with security boundaries.",
@@ -828,7 +860,7 @@ def generate_resume_metrics(records: list[MetricRecord]) -> str:
         "  - *Source*: `benchmarks/final_eval/worker.py:run_skill_routing_benchmark` & `minicode/skill_router.py`.",
         "",
         "- **Context Budget & Recoverable Artifact Offloading**:",
-        "  - *Baseline*: Context compactor truncated large tool logs permanently (zero artifact recovery).",
+        "  - *Baseline*: Baseline persisted oversized tool results through the existing ToolResultBudgetManager but lacked a first-class artifact recovery interface. Adaptive added stable Artifact IDs and explicit bounded recovery.",
         "  - *Adaptive*: Adaptive 包含结构化上下文元数据与可恢复 artifact 引用，单轮上下文基础开销略高于纯文本（743 vs 512 tokens, +45.1%），但在长上下文和大型工具输出场景下通过 offload 保证 100% 遵守 6000 token budget，且产物 100% 可恢复验证 (SHA-256 match).",
         "  - *Impact*: Protected early critical architectural constraints and latest verification evidence under extreme context pressure without unrecoverable data loss.",
         "  - *Source*: `minicode/context_budget.py` and `minicode/context_artifacts.py`.",
@@ -853,7 +885,7 @@ def generate_resume_metrics(records: list[MetricRecord]) -> str:
         "",
         "- **Topological DAG Multi-Agent Scheduling**:",
         "  - *Baseline*: Limited to single one-off `task` delegation.",
-        "  - *Adaptive*: Orchestrated 5-node subagent teams (Researcher, Coder, Tester, Reviewer) with parallel sibling research concurrency, workspace writer serialization locks, and automated quality gates (TestGate and ReviewGate).",
+        "  - *Adaptive*: Orchestrated 5-node subagent teams (Researcher, Coder, Tester, Reviewer) with parallel sibling research concurrency, workspace writer serialization locks, and automated quality gates (TestGate and ReviewGate) under deterministic scheduler runtime verification.",
         "  - *Source*: `minicode/team_planner.py`, `minicode/team_scheduler.py`, `minicode/task_graph.py`.",
         "",
         "---",
@@ -861,8 +893,8 @@ def generate_resume_metrics(records: list[MetricRecord]) -> str:
         "### 4. Security Policy & Tamper-Evident Auditing",
         "",
         "- **Hard-Denial of Catastrophic Operations**:",
-        f"  - *Baseline*: {b_block} block rate; destructive commands like `git reset --hard` were permitted in auto/bypass modes.",
-        f"  - *Adaptive*: Achieved **{a_block} block rate** for catastrophic commands and directory traversal attacks across all permission modes.",
+        f"  - *Baseline*: {b_block} block rate on deterministic policy fixture; destructive commands like `git reset --hard` were permitted in auto/bypass modes.",
+        f"  - *Adaptive*: Achieved **{a_block} deterministic policy-fixture block rate** for catastrophic commands and directory traversal attacks (evaluating hard-denial rules on destructive operations).",
         "  - *Source*: `minicode/security_policy.py` and `minicode/security_rules.py`.",
         "",
         "- **Sensitive Data Redaction & Tamper-Evident Audit**:",

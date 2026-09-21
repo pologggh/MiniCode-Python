@@ -9,9 +9,9 @@ Comprehensive cross-version evaluation comparing **Original MiniCode** against *
 - **Phase 1 Merge Parentage Proof**: Commit `f3d8d7a` has Parent 1 `fd9bf63` (baseline) and Parent 2 `0db89b1` (`feat/skill-router`).
 - **Platform**: `Windows 10`
 - **Python Version**: `3.13.9`
-- **Timestamp**: `2026-09-21T12:19:25Z`
-- **Baseline Loaded Minicode**: `C:\Users\user\AppData\Local\Temp\eval_baseline_gecxrx0q\minicode\__init__.py`
-- **Adaptive Loaded Minicode**: `C:\Users\user\AppData\Local\Temp\eval_adaptive_lirshzw8\minicode\__init__.py`
+- **Timestamp**: `2026-09-21T13:02:40Z`
+- **Baseline Loaded Minicode**: `C:\Users\user\AppData\Local\Temp\eval_baseline_ybepc58z\minicode\__init__.py`
+- **Adaptive Loaded Minicode**: `C:\Users\user\AppData\Local\Temp\eval_adaptive_nukzthnu\minicode\__init__.py`
 
 ## Methodology & Cross-Process Isolation
 
@@ -26,12 +26,13 @@ Comprehensive cross-version evaluation comparing **Original MiniCode** against *
 | :--- | :--- | :--- | :--- |
 | Agent Loop & Tool Dispatch | Supported | Supported | Pre-existing |
 | Session & Working Memory | Supported | Supported | Pre-existing |
+| Legacy Large Tool Result Persistence | Supported (`ToolResultBudgetManager`) | Supported (`ToolResultBudgetManager`) | Pre-existing |
 | Single Task Sub-Agent | Supported (`task_tool`) | Supported | Pre-existing |
 | Basic Permission Manager | Supported (`PermissionManager`) | Supported | Pre-existing |
 | Adaptive Skill Routing | **UNSUPPORTED** (Dumps all skills) | **SUPPORTED** (`SkillRouter`) | Phase 1 |
 | Structured Experience Memory | **UNSUPPORTED** (Unstructured text) | **SUPPORTED** (`StructuredExperienceMemory`) | Phase 2 |
 | Dynamic Context Budgeting | **UNSUPPORTED** (Reactive compactor) | **SUPPORTED** (`ContextBudgetManager`) | Phase 3 |
-| Recoverable Context Artifacts | **UNSUPPORTED** (Discarded) | **SUPPORTED** (`ContextArtifactStore`) | Phase 3 |
+| First-class Recoverable Context Artifact | **UNSUPPORTED / PARTIAL** (Lacked stable IDs, range retrieval API, and load tool) | **SUPPORTED** (`ContextArtifactStore`) | Phase 3 |
 | Centralized Multi-Agent Team | **UNSUPPORTED** (One-off only) | **SUPPORTED** (`AgentTeamOrchestrator`) | Phase 4 |
 | DAG & Quality Gates | **UNSUPPORTED** | **SUPPORTED** (TestGate & ReviewGate) | Phase 4 |
 | Central Security Policy Engine | **UNSUPPORTED** | **SUPPORTED** (`SecurityPolicyEngine`) | Phase 5 |
@@ -71,7 +72,7 @@ Comprehensive cross-version evaluation comparing **Original MiniCode** against *
 | Context Management | `stable_task_retention` | True | True | +0 (+0.0%) | DIRECT | higher_is_better | System prompt and core task retained |
 | Context Management | `latest_verification_retention` | True | True | +0 (+0.0%) | DIRECT | higher_is_better | Recent verification evidence protected with high priority |
 | Context Management | `budget_compliance` | True | True | +0 (+0.0%) | DIRECT | higher_is_better | Both versions evaluated against identical 6000 token budget limit |
-| Context Management | `recoverable_context_artifacts` | UNSUPPORTED | True | N/A | ADAPTIVE_ONLY | higher_is_better | Baseline discards truncated tool results permanently |
+| Context Management | `recoverable_context_artifacts` | UNSUPPORTED | True | N/A | ADAPTIVE_ONLY | higher_is_better | Baseline persisted oversized tool results through ToolResultBudgetManager but lacked first-class artifact recovery; Adaptive provides stable artifact IDs and explicit bounded recovery. |
 | Multi-Agent Runtime | `one_off_task_delegation` | True | True | +0 (+0.0%) | DIRECT | higher_is_better | Supported in both baseline and adaptive |
 | Multi-Agent Runtime | `centralized_multi_agent` | UNSUPPORTED | True | N/A | ADAPTIVE_ONLY | higher_is_better | Baseline only has single one-off task tool |
 | Multi-Agent Runtime | `dag_dependency_execution` | UNSUPPORTED | True | N/A | ADAPTIVE_ONLY | higher_is_better | Adaptive executes research -> coding -> test -> review pipeline |
@@ -80,13 +81,13 @@ Comprehensive cross-version evaluation comparing **Original MiniCode** against *
 | Multi-Agent Runtime | `role_quality_gates` | UNSUPPORTED | True | N/A | ADAPTIVE_ONLY | higher_is_better | Enforces test evidence and code review approvals |
 | Multi-Agent Runtime | `bounded_replan` | UNSUPPORTED | True | N/A | ADAPTIVE_ONLY | higher_is_better | Capped by max_replan_attempts |
 | Multi-Agent Runtime | `parent_context_isolation` | UNSUPPORTED | True | N/A | ADAPTIVE_ONLY | higher_is_better | Parent receives concise tool result, raw child history retained in child |
-| Multi-Agent Runtime | `multi_agent_runtime_verified` | UNSUPPORTED | VERIFIED | N/A | ADAPTIVE_ONLY | higher_is_better | Baseline lacks team runtime; Adaptive runtime verified through live DAG execution |
-| Security Policy | `policy_critical_action_block_rate` | 0.33 | 1.0 | +0.67 (+203.0%) | DIRECT | higher_is_better | Deterministic security policy fixture decision rate, not live attack bypass rate |
+| Multi-Agent Runtime | `multi_agent_runtime_verified` | UNSUPPORTED | VERIFIED | N/A | ADAPTIVE_ONLY | higher_is_better | Baseline lacks team runtime; Adaptive runtime verified through deterministic scheduler runtime verification |
+| Security Policy | `policy_critical_action_block_rate` | 0.33 | 1.0 | +0.67 (+203.0%) | DIRECT | higher_is_better | Deterministic policy fixture decision rate on catastrophic actions (e.g. 33% -> 100%), not live attack bypass rate |
 | Security Policy | `policy_intervention_rate` | 0.7 | 0.8 | +0.1 (+14.3%) | DIRECT | higher_is_better | Deterministic security policy fixture intervention rate, not live attack bypass rate |
 | Security Policy | `sensitive_secret_leak_rate` | 1.0 | 0.0 | -1 (-100.0%) | DIRECT | lower_is_better | Live runtime check: Adaptive automatically masks API keys with [REDACTED] |
-| Security Policy | `fail_closed_missing_permissions` | 0.5 | 1.0 | +0.5 (+100.0%) | DIRECT | higher_is_better | Dynamically evaluated: Baseline blocks sensitive edit but runs command (0.50); Adaptive blocks both (1.00) |
-| Security Policy | `mcp_pre_execution_gate` | UNSUPPORTED | VERIFIED | N/A | ADAPTIVE_ONLY | higher_is_better | Baseline lacks MCP pre-execution security policy engine |
-| Security Policy | `untrusted_taint_enforcement` | UNSUPPORTED | VERIFIED | N/A | ADAPTIVE_ONLY | higher_is_better | Baseline lacks untrusted input taint tracking |
+| Security Policy | `fail_closed_missing_permissions` | 0.0 | 1.0 | +1 | DIRECT | higher_is_better | Dynamically evaluated: Baseline without policy engine executes directly on missing permissions; Adaptive enforces fail-closed pre-gate on all state-changing actions. |
+| Security Policy | `mcp_pre_execution_gate` | UNSUPPORTED | VERIFIED | N/A | ADAPTIVE_ONLY | higher_is_better | Baseline lacks MCP pre-execution security policy engine; Adaptive dynamically verified with deny/allow hooks |
+| Security Policy | `untrusted_taint_enforcement` | UNSUPPORTED | VERIFIED | N/A | ADAPTIVE_ONLY | higher_is_better | Baseline lacks untrusted input taint tracking; Adaptive dynamically verified through mutation gate escalation |
 | Security Policy | `tamper_evident_audit_chain` | UNSUPPORTED | True | N/A | ADAPTIVE_ONLY | higher_is_better | Cryptographic hash chaining validates audit log integrity |
 | Common Runtime Tasks | `common_runtime_task_completion` | True | True | +0 (+0.0%) | DIRECT | higher_is_better | Both versions complete identical scripted agent loop tasks |
 
@@ -98,16 +99,16 @@ Key direct improvements where identical inputs were evaluated across both versio
 2. **Skill Exposure Micro Precision (100 Skills)**: Improved from **0.5%** in baseline to **50.0%** in Adaptive. Irrelevant skills exposed per task dropped from **99.45** to **0.55**.
 3. **Normal Experience Retrieval Failure Leakage**: Eliminated from **38.0%** in baseline text search to **0.0%** in Adaptive through outcome-aware filtering.
 4. **Verified Experience Precision**: Reached **67.0%** precision in Adaptive retrieval compared to **38.0%** unverified keyword matches in baseline.
-5. **Deterministic Policy Block Rate**: Improved from **33%** in baseline to **100%** in Adaptive, which enforces hard denials on destructive commands (`git reset --hard`, `rm -rf`) even in `BYPASS` mode.
+5. **Deterministic Policy Block Rate**: Improved from **33%** in baseline to **100%** in Adaptive on the deterministic policy fixture, which enforces hard denials on destructive commands (`git reset --hard`, `rm -rf`).
 6. **Sensitive Secret Leak Rate**: Reduced from **100%** raw leakage on `.env` read to **0%** via automatic secret redaction (`[REDACTED]`).
-7. **Context Token Footprint & Budget Compliance**: Adaptive includes structured context metadata and recoverable artifact references, resulting in baseline per-turn prompt overhead slightly higher than plain text (743 vs 512 tokens, +45.1%). However, under heavy context pressure with large tool outputs (12k tokens), Adaptive guarantees 100% compliance with the identical 6,000 token budget limit via artifact offloading with 100% hash-verified recovery, whereas Baseline truncates permanently with zero artifact recovery.
+7. **Context Token Footprint & Budget Compliance**: Adaptive includes structured context metadata and recoverable artifact references, resulting in baseline per-turn prompt overhead slightly higher than plain text (743 vs 512 tokens, +45.1%). However, under heavy context pressure with large tool outputs (12k tokens), Adaptive guarantees 100% compliance with the identical 6,000 token budget limit via artifact offloading with 100% hash-verified recovery, whereas Baseline persisted oversized tool results through the existing ToolResultBudgetManager but lacked a first-class artifact recovery interface.
 
 ## Adaptive-Only Capabilities
 
 Capabilities completely absent in Original MiniCode (baseline marked as `UNSUPPORTED`):
 
-- **Recoverable Context Artifacts**: Large tool outputs (e.g. 12k token test traces) are offloaded to disk artifacts with deterministic reference pointers, allowing on-demand range retrieval rather than permanent truncation.
-- **Centralized Agent Team Orchestration**: Automated multi-role decomposition (Researcher, Coder, Tester, Reviewer) executed via a topological DAG with sibling concurrency and writer serialization.
+- **First-class Recoverable Context Artifacts**: While baseline possessed legacy disk persistence for tool outputs via `ToolResultBudgetManager`, Adaptive introduced first-class recoverable context artifacts with deterministic IDs (`ctx_*`), structured metadata, range retrieval, and load tools, verified with 100% SHA-256 hash match.
+- **Centralized Agent Team Orchestration**: Automated multi-role decomposition (Researcher, Coder, Tester, Reviewer) executed via a topological DAG with sibling concurrency and writer serialization under deterministic scheduler runtime verification.
 - **Role Quality Gates**: Automated validation ensuring that code modifications cannot merge without passing test evidence (TestGate) and structured reviewer sign-off (ReviewGate).
 - **Tamper-Evident Security Audit Log**: Every tool execution is recorded in an append-only JSONL log with cryptographic SHA-256 hash chaining, verified via `verify_chain()`.
 - **Untrusted Content Taint Enforcement**: External tool results (e.g. web fetch, MCP outputs) are scanned for prompt injection attacks and wrapped with security boundaries.
