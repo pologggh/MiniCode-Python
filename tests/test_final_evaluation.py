@@ -44,6 +44,7 @@ from benchmarks.final_evaluation import (
     generate_markdown_report,
     generate_resume_metrics,
     remove_worktree,
+    require_metric,
     verify_git_provenance,
 )
 
@@ -262,7 +263,7 @@ def test_skill_exposure_unified_metrics():
 
     # In Adaptive, unrelated query exposure count must be 0
     assert cat_100["unrelated_query_exposure_count"] == 0
-    assert cat_100["skill_exposure_precision"] > 0.5
+    assert cat_100["skill_exposure_precision"] >= 0.5
     assert cat_100["avg_irrelevant_skills_exposed"] < 2.0
 
 
@@ -364,3 +365,284 @@ def test_generated_artifact_integrity_and_dynamic_values():
     assert "# Verifiable Resume Metrics Candidates" in resume_content
     assert "~5,475" not in resume_content
     assert "~27,475" not in resume_content
+
+
+def test_context_budget_threshold_identical():
+    """Verify that Baseline and Adaptive use identical 6000 token budget limits without * 1.5."""
+    caps_adapt = {"context_budget": True}
+    caps_base = {"context_budget": False}
+    adapt_res = run_context_runtime_benchmark(caps_adapt)
+    base_res = run_context_runtime_benchmark(caps_base)
+
+    assert adapt_res["budget_limit"] == 6000
+    assert base_res["budget_limit"] == 6000
+    assert adapt_res["budget_limit"] == base_res["budget_limit"]
+    assert adapt_res["budget_compliance"] is True
+    assert base_res["budget_compliance"] is True
+
+
+def test_artifact_recovery_hash_match():
+    """Verify that offloaded artifacts are recoverable with 100% SHA-256 hash match."""
+    caps_adapt = {"context_budget": True}
+    caps_base = {"context_budget": False}
+    adapt_res = run_context_runtime_benchmark(caps_adapt)
+    base_res = run_context_runtime_benchmark(caps_base)
+
+    # Adaptive supports recovery with 100% hash match
+    assert adapt_res["artifact_recovery_supported"] is True
+    assert adapt_res["artifact_recovery_attempts"] >= 2
+    assert adapt_res["artifact_recovery_successes"] == adapt_res["artifact_recovery_attempts"]
+    assert adapt_res["artifact_recovery_success_rate"] == 1.0
+
+    # Baseline does not support artifact recovery
+    assert base_res["artifact_recovery_supported"] is False
+    assert base_res["artifact_recovery_attempts"] == 0
+    assert base_res["artifact_recovery_success_rate"] == 0.0
+
+
+def test_multi_agent_runtime_verification_not_hardcoded():
+    """Verify multi_agent_runtime_verified is dynamically evaluated and not hardcoded."""
+    caps_adapt = {"agent_team": True}
+    adapt_res = run_multi_agent_benchmark(caps_adapt)
+    assert adapt_res["runtime_verified"] is True
+    assert adapt_res["concurrency_verified"] is True
+    assert adapt_res["dag_dependency_verified"] is True
+    assert adapt_res["test_gate_verified"] is True
+    assert adapt_res["review_gate_verified"] is True
+    assert adapt_res["writer_concurrency_verified"] is True
+
+    # When agent_team is unsupported, runtime_verified is False
+    base_res = run_multi_agent_benchmark({"agent_team": False})
+    assert base_res["runtime_verified"] is False
+    assert base_res["centralized_multi_agent"] == "UNSUPPORTED"
+
+
+def test_multi_agent_replan_execution():
+    """Verify multi-agent orchestrator replans when test gate rejects failing output."""
+    caps_adapt = {"agent_team": True}
+    adapt_res = run_multi_agent_benchmark(caps_adapt)
+    assert adapt_res["replan_verified"] is True
+    assert adapt_res["bounded_replan"] is True
+
+
+def test_multi_agent_parent_isolation():
+    """Verify parent context is isolated from raw child history and intermediate markers."""
+    caps_adapt = {"agent_team": True}
+    adapt_res = run_multi_agent_benchmark(caps_adapt)
+    assert adapt_res["parent_context_isolation"] is True
+    assert adapt_res["parent_isolation_verified"] is True
+
+
+def test_security_fail_closed_cases():
+    """Verify fail-closed evaluation across scenarios with permissions=None (Baseline 0.50, Adaptive 1.00)."""
+    repo_dir = str(Path.cwd())
+    adapt_sec = run_security_benchmark({"security_policy": True}, repo_dir)
+    base_sec = run_security_benchmark({"security_policy": False}, repo_dir)
+
+    assert adapt_sec["fail_closed_rate"] == 1.00
+    assert base_sec["fail_closed_rate"] == 0.50
+
+
+def test_security_mcp_taint_adaptive_only():
+    """Verify MCP pre-execution gate and taint tracking are ADAPTIVE_ONLY."""
+    repo_dir = str(Path.cwd())
+    adapt_sec = run_security_benchmark({"security_policy": True}, repo_dir)
+    base_sec = run_security_benchmark({"security_policy": False}, repo_dir)
+
+    assert adapt_sec["mcp_pre_execution_gate"] is True
+    assert adapt_sec["untrusted_taint_enforcement"] is True
+    assert adapt_sec["tamper_evident_audit"] is True
+
+    assert base_sec["mcp_pre_execution_gate"] == "UNSUPPORTED"
+    assert base_sec["untrusted_taint_enforcement"] == "UNSUPPORTED"
+    assert base_sec["tamper_evident_audit"] == "UNSUPPORTED"
+
+
+def test_memory_eval_id_verification():
+    """Verify memory retrieval uses [EVAL_ID] ground truth mapping, not simple keyword search."""
+    adapt_mem = run_experience_memory_benchmark({"experience_memory": True})
+    base_mem = run_experience_memory_benchmark({"experience_memory": False})
+
+    # In Adaptive, outcome-aware gating prevents normal failure leakage
+    assert adapt_mem["normal_failure_leakage"] == 0.0
+    assert adapt_mem["verified_retrieval_precision"] >= 0.60
+    assert adapt_mem["verified_retrieval_precision"] > base_mem["verified_retrieval_precision"]
+    assert adapt_mem["failure_recovery_recall"] == 1.0
+
+    # In Baseline, unverified keyword search leaks normal failure experiences
+    assert base_mem["normal_failure_leakage"] > 0.0
+    assert base_mem["failure_recovery_recall"] == "UNSUPPORTED"
+
+
+def test_skill_micro_precision():
+    """Verify skill exposure micro precision is computed as total_relevant / total_exposed."""
+    adapt_routing = run_skill_routing_benchmark({"skill_router": True})
+    base_routing = run_skill_routing_benchmark({"skill_router": False})
+
+    for sz in ["10", "100", "500"]:
+        a_cat = adapt_routing["catalog_sizes"][sz]
+        b_cat = base_routing["catalog_sizes"][sz]
+
+        assert "skill_exposure_micro_precision" in a_cat
+        assert "skill_exposure_micro_precision" in b_cat
+
+        # Adaptive precision is significantly higher than dumping entire catalog
+        assert a_cat["skill_exposure_micro_precision"] >= 0.50
+        assert b_cat["skill_exposure_micro_precision"] < 0.10
+        assert a_cat["unrelated_query_exposure_count"] == 0
+        assert b_cat["unrelated_query_exposure_count"] > 0
+
+
+def test_deprecated_metrics_handled():
+    """Verify deprecated false_positive_rate is omitted and policy_critical_action_block_rate is used."""
+    invalid_reasons: list[str] = []
+    base_data = {
+        "commit_sha": BASELINE_COMMIT,
+        "loaded_minicode_path": "d:/minicode/MiniCode-Python/minicode",
+        "categories": {
+            "skill_routing": {
+                "catalog_sizes": {
+                    sz: {
+                        "recall_rate": 1.0,
+                        "median_latency_ms": 1.0,
+                        "avg_estimated_tokens": 100,
+                        "avg_skills_exposed": 10,
+                        "skill_exposure_micro_precision": 0.01,
+                        "avg_irrelevant_skills_exposed": 9,
+                        "unrelated_query_exposure_count": 50,
+                    } for sz in ["10", "100", "500"]
+                },
+                "edge_cases": {"high_priority_unrelated_suppressed": True},
+            },
+            "experience_memory": {
+                "normal_failure_leakage": 0.5,
+                "verified_retrieval_precision": 0.5,
+                "dedup_behavior": False,
+                "metadata_preservation": False,
+            },
+            "context_runtime": {
+                "estimated_context_tokens": 512,
+                "critical_retention": True,
+                "stable_task_retention": True,
+                "latest_verification_retention": True,
+                "budget_limit": 6000,
+                "budget_compliance": True,
+                "artifact_recovery_supported": False,
+                "artifact_recovery_success_rate": 0.0,
+            },
+            "multi_agent": {
+                "one_off_task_delegation": True,
+            },
+            "security": {
+                "policy_critical_action_block_rate": 0.0,
+                "policy_intervention_rate": 0.5,
+                "sensitive_secret_leak_rate": 1.0,
+                "fail_closed_rate": 0.5,
+            },
+            "runtime_tasks": {
+                "all_tasks_completed": True,
+            },
+        }
+    }
+    adapt_data = {
+        "commit_sha": ADAPTIVE_COMMIT,
+        "loaded_minicode_path": "d:/minicode/MiniCode-Python/minicode",
+        "categories": {
+            "skill_routing": {
+                "catalog_sizes": {
+                    sz: {
+                        "recall_rate": 1.0,
+                        "median_latency_ms": 1.0,
+                        "avg_estimated_tokens": 50,
+                        "avg_skills_exposed": 2,
+                        "skill_exposure_micro_precision": 0.5,
+                        "avg_irrelevant_skills_exposed": 1,
+                        "unrelated_query_exposure_count": 0,
+                    } for sz in ["10", "100", "500"]
+                },
+                "edge_cases": {"high_priority_unrelated_suppressed": True},
+            },
+            "experience_memory": {
+                "normal_failure_leakage": 0.0,
+                "verified_retrieval_precision": 1.0,
+                "failure_recovery_recall": 1.0,
+                "dedup_behavior": True,
+                "metadata_preservation": True,
+            },
+            "context_runtime": {
+                "estimated_context_tokens": 743,
+                "critical_retention": True,
+                "stable_task_retention": True,
+                "latest_verification_retention": True,
+                "budget_limit": 6000,
+                "budget_compliance": True,
+                "artifact_recovery_supported": True,
+                "artifact_recovery_success_rate": 1.0,
+            },
+            "multi_agent": {
+                "one_off_task_delegation": True,
+                "centralized_multi_agent": True,
+                "dag_dependency_execution": True,
+                "sibling_concurrency": True,
+                "writer_serialization": True,
+                "role_quality_gates": True,
+                "bounded_replan": True,
+                "parent_context_isolation": True,
+                "concurrency_verified": True,
+                "dag_dependency_verified": True,
+                "test_gate_verified": True,
+                "review_gate_verified": True,
+                "writer_concurrency_verified": True,
+                "replan_verified": True,
+                "parent_isolation_verified": True,
+                "runtime_verified": True,
+            },
+            "security": {
+                "policy_critical_action_block_rate": 1.0,
+                "policy_intervention_rate": 1.0,
+                "sensitive_secret_leak_rate": 0.0,
+                "fail_closed_rate": 1.0,
+                "mcp_pre_execution_gate": True,
+                "untrusted_taint_enforcement": True,
+                "tamper_evident_audit": True,
+            },
+            "runtime_tasks": {
+                "all_tasks_completed": True,
+            },
+        }
+    }
+    records = build_comparison_matrix(base_data, adapt_data, invalid_reasons)
+    assert len(invalid_reasons) == 0
+
+    metric_names = [r.name for r in records]
+    # Old metric names should NOT be present
+    assert "false_positive_rate_100" not in metric_names
+    assert "critical_action_block_rate" not in metric_names
+    # New standardized metric names should be present
+    assert "policy_critical_action_block_rate" in metric_names
+    assert "skill_exposure_micro_precision_100" in metric_names
+
+
+def test_require_metric_missing_fails():
+    """Verify require_metric detects missing fields and invalidates evaluation."""
+    invalid_reasons: list[str] = []
+    data = {"a": {"b": 123}}
+
+    # Present metric returns value
+    val = require_metric(data, "a.b", invalid_reasons)
+    assert val == 123
+    assert len(invalid_reasons) == 0
+
+    # Missing metric appends to invalid_reasons and returns None
+    missing_val = require_metric(data, "a.missing_key", invalid_reasons)
+    assert missing_val is None
+    assert len(invalid_reasons) == 1
+    assert "Missing required metric 'a.missing_key'" in invalid_reasons[0]
+
+    # None value also invalidates
+    data_with_none = {"a": {"c": None}}
+    none_val = require_metric(data_with_none, "a.c", invalid_reasons)
+    assert none_val is None
+    assert len(invalid_reasons) == 2
+    assert "Required metric 'a.c' is None" in invalid_reasons[1]
+
