@@ -466,34 +466,50 @@ class WorktreeIsolator:
                         files.append(f)
         return files
 
+    @staticmethod
+    def _extract_file_diff_preview(patch_content: str, file_path: str, max_chars: int = 2000) -> str:
+        """Extract diff hunk for a specific file from unified diff."""
+        lines = patch_content.splitlines()
+        file_lines = []
+        capturing = False
+        target_marker = f"diff --git a/{file_path} b/{file_path}"
+        for line in lines:
+            if line.startswith("diff --git "):
+                if line.startswith(target_marker):
+                    capturing = True
+                else:
+                    if capturing:
+                        break
+            if capturing:
+                file_lines.append(line)
+        if file_lines:
+            return "\n".join(file_lines)[:max_chars]
+        return patch_content[:max_chars]
+
     def apply_patch(self, patch_content: str, permissions: Any | None = None) -> tuple[bool, str]:
-        """Apply patch to base_path, gated by parent permissions."""
+        """Apply patch to base_path, gated strictly by parent PermissionManager.ensure_edit().
+        
+        Fail-closed:
+        - If patch is empty: returns (True, "no_changes")
+        - If permissions is None: returns (False, "permission_manager_missing")
+        - If any file fails ensure_edit: returns (False, "permission_denied")
+        - No custom prompt call or action bypass allowed.
+        """
         import subprocess
         if not patch_content or not patch_content.strip():
             return True, "no_changes"
 
-        files = self.extract_patch_files(patch_content)
-        if permissions:
-            if hasattr(permissions, "ensure_edit"):
-                for fpath in files:
-                    try:
-                        full_fpath = str(self.base_path / fpath)
-                        permissions.ensure_edit(full_fpath, diff_preview=patch_content[:1000])
-                    except Exception as e:
-                        return False, f"permission_denied: {e}"
+        if permissions is None or not hasattr(permissions, "ensure_edit"):
+            return False, "permission_manager_missing"
 
-            if hasattr(permissions, "prompt") and permissions.prompt:
-                try:
-                    decision = permissions.prompt({
-                        "action": "apply_worktree_patch",
-                        "files": files,
-                        "patch_length": len(patch_content),
-                        "base_path": str(self.base_path),
-                    })
-                    if isinstance(decision, dict) and decision.get("action") == "deny":
-                        return False, "permission_denied"
-                except Exception as e:
-                    return False, f"permission_denied: {e}"
+        files = self.extract_patch_files(patch_content)
+        for fpath in files:
+            full_fpath = str(self.base_path / fpath)
+            diff_preview = self._extract_file_diff_preview(patch_content, fpath)
+            try:
+                permissions.ensure_edit(full_fpath, diff_preview=diff_preview)
+            except Exception as e:
+                return False, "permission_denied"
 
         try:
             res = subprocess.run(
@@ -510,13 +526,44 @@ class WorktreeIsolator:
         except Exception as e:
             return False, f"git_apply_exception: {e}"
 
+    @staticmethod
+    def _make_worktree_scoped_prompt_handler(worktree_root: Path):
+        """Create a prompt handler allowing edits inside worktree, but strictly denying outside paths and commands."""
+        resolved_root = worktree_root.resolve()
+
+        def scoped_prompt(request: dict[str, Any]) -> dict[str, Any]:
+            kind = request.get("kind")
+            if kind == "edit":
+                target = request.get("scope") or ""
+                if not target and request.get("details"):
+                    for line in request["details"]:
+                        if line.startswith("target: "):
+                            target = line.replace("target: ", "", 1).strip()
+                            break
+                if target:
+                    try:
+                        Path(target).resolve().relative_to(resolved_root)
+                        return {"decision": "allow_turn"}
+                    except (ValueError, Exception):
+                        return {"decision": "deny_once"}
+                return {"decision": "deny_once"}
+            # Strictly deny external paths, commands, MCP, etc.
+            return {"decision": "deny_once"}
+
+        return scoped_prompt
+
     def create_isolated_permission_manager(
         self, worktree_cwd: str, parent_permissions: Any | None = None
     ) -> Any:
-        """Create a PermissionManager scoped strictly to the worktree cwd."""
+        """Create a PermissionManager scoped strictly to the worktree cwd.
+        
+        Files inside worktree_cwd are allowed autonomously for writer sub-agents;
+        files outside worktree_cwd and dangerous commands are strictly denied.
+        """
         from minicode.permissions import PermissionManager
-        prompt_handler = getattr(parent_permissions, "prompt", None)
-        return PermissionManager(workspace_root=worktree_cwd, prompt=prompt_handler)
+        wt_path = Path(worktree_cwd).resolve()
+        scoped_prompt = self._make_worktree_scoped_prompt_handler(wt_path)
+        return PermissionManager(workspace_root=str(wt_path), prompt=scoped_prompt)
 
     def cleanup_worktree(self, worktree_path: Path) -> None:
         """Remove a detached worktree and clean up temp files."""
