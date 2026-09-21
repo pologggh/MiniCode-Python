@@ -152,6 +152,17 @@ class TaskGraph:
         self.updated_at = time.time()
         return slot
 
+    def skip_task(self, slot_key: str, reason: str = "") -> TaskSlot:
+        """Mark a slot as skipped (e.g. when upstream dependency failed)."""
+        slot = self.slots.get(slot_key)
+        if not slot:
+            raise ValueError(f"Slot {slot_key} not found")
+        slot.state = TaskState.SKIPPED
+        slot.completed_at = time.time()
+        slot.error = reason
+        self.updated_at = time.time()
+        return slot
+
     # --- Graph Logic ---
     def get_ready_tasks(self) -> list[TaskDefinition]:
         """Get tasks whose dependencies are all completed."""
@@ -159,16 +170,14 @@ class TaskGraph:
             slot.task_id for slot in self.slots.values()
             if slot.state == TaskState.COMPLETED
         }
+        non_pending_ids = {
+            slot.task_id for slot in self.slots.values()
+            if slot.state in (TaskState.COMPLETED, TaskState.FAILED, TaskState.SKIPPED, TaskState.RUNNING)
+        }
 
         ready = []
         for task_def in self.definitions.values():
-            if task_def.id in completed_task_ids:
-                continue
-            # Check if already running
-            if any(
-                s.task_id == task_def.id and s.state == TaskState.RUNNING
-                for s in self.slots.values()
-            ):
+            if task_def.id in non_pending_ids:
                 continue
             # Check dependencies
             if all(dep in completed_task_ids for dep in task_def.dependencies):
