@@ -98,7 +98,7 @@ class TeamPlanner:
             id="coding",
             name="Implement Code Changes",
             description=f"Implement changes and solutions according to research for: {goal}",
-            dependencies=["research_impl"],
+            dependencies=["research_impl", "research_test"],
             priority=TaskPriority.HIGH,
             metadata={"role": AgentRole.CODING.value},
         )
@@ -111,7 +111,7 @@ class TeamPlanner:
             id="test",
             name="Execute Verification Tests",
             description=f"Execute tests using test_runner to verify implementation for: {goal}",
-            dependencies=["coding", "research_test"],
+            dependencies=["coding"],
             priority=TaskPriority.CRITICAL,
             metadata={"role": AgentRole.TEST.value},
         )
@@ -132,3 +132,66 @@ class TeamPlanner:
         graph.assign_slot(def_reviewer.id, slot_name="default")
 
         return TeamPlan(goal=goal, graph=graph, task_roles=task_roles)
+
+    @staticmethod
+    def validate_plan(plan: TeamPlan) -> tuple[bool, str]:
+        """Validate plan integrity before execution.
+        
+        Checks:
+        1. Node count <= 5 initial nodes.
+        2. At least one root node (no dependencies).
+        3. All dependencies exist in definitions.
+        4. No self-dependencies.
+        5. No cyclic dependencies (DAG check).
+        6. Reasonable writer count (at least 1 writer, not all writers).
+        """
+        defs = plan.graph.definitions
+        if not defs:
+            return False, "Plan contains no tasks"
+
+        if len(defs) > 5:
+            return False, f"Too many initial tasks: {len(defs)} > 5"
+
+        roots = []
+        for tid, tdef in defs.items():
+            if not tdef.dependencies:
+                roots.append(tid)
+            for dep in tdef.dependencies:
+                if dep == tid:
+                    return False, f"Self-dependency detected in task '{tid}'"
+                if dep not in defs:
+                    return False, f"Missing dependency: task '{tid}' depends on non-existent task '{dep}'"
+
+        if not roots:
+            return False, "No root tasks found (all tasks have dependencies; potential cycle)"
+
+        # Check for cycles using DFS
+        visited: dict[str, int] = {tid: 0 for tid in defs}
+
+        def has_cycle(node: str) -> bool:
+            visited[node] = 1
+            for dep in defs[node].dependencies:
+                if visited.get(dep) == 1:
+                    return True
+                if visited.get(dep) == 0 and has_cycle(dep):
+                    return True
+            visited[node] = 2
+            return False
+
+        for tid in defs:
+            if visited[tid] == 0:
+                if has_cycle(tid):
+                    return False, f"Cyclic dependency detected involving task '{tid}'"
+
+        writer_count = sum(
+            1
+            for tid in defs
+            if get_role_policy(plan.get_role_for_task(tid)).is_writer
+        )
+        if writer_count < 1:
+            return False, "Plan has no writer tasks (at least 1 writer required)"
+        if writer_count >= len(defs):
+            return False, "Unreasonable writer count: all tasks are writers"
+
+        return True, "Plan is valid"
+

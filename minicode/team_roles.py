@@ -59,9 +59,7 @@ _TEST_TOOLS: frozenset[str] = frozenset({
     "list_files",
     "grep_files",
     "test_runner",
-    "run_command",
-    "edit_file",
-    "write_file",
+    "load_context_artifact",
 })
 
 _REVIEWER_TOOLS: frozenset[str] = frozenset({
@@ -101,15 +99,16 @@ ROLE_POLICIES: dict[AgentRole, AgentRolePolicy] = {
     AgentRole.TEST: AgentRolePolicy(
         role=AgentRole.TEST,
         allowed_tools=_TEST_TOOLS,
-        is_writer=True,
+        is_writer=False,
         max_turns=10,
         system_prompt=(
             "You are a specialized Test sub-agent. Your duty is to verify implementation correctness "
-            "by executing test_runner or commands and inspecting test output. "
-            "You MUST run tests and verify that tests pass (ok=True). If tests fail, report the exact "
+            "by executing test_runner. You have READ-ONLY access and cannot modify code or run arbitrary commands. "
+            "You MUST execute test_runner and verify that tests pass (ok=True). If tests fail, report the exact "
             "failure details clearly so the team can address them."
         ),
     ),
+
     AgentRole.REVIEWER: AgentRolePolicy(
         role=AgentRole.REVIEWER,
         allowed_tools=_REVIEWER_TOOLS,

@@ -27,8 +27,8 @@ def _validate(input_data: dict[str, Any]) -> dict[str, Any]:
     max_replans = int(input_data.get("max_replans", 1))
     if max_replans < 0:
         max_replans = 0
-    elif max_replans > 3:
-        max_replans = 3
+    elif max_replans > 1:
+        max_replans = 1
 
     return {
         "goal": goal.strip(),
@@ -64,6 +64,12 @@ def _run(input_data: dict[str, Any], context: ToolContext) -> ToolResult:
 
     planner = TeamPlanner()
     plan = planner.plan(goal=goal)
+    valid, err_msg = planner.validate_plan(plan)
+    if not valid:
+        return ToolResult(
+            ok=False,
+            output=f"Team plan validation failed: {err_msg}",
+        )
 
     scheduler = TeamScheduler(max_workers=4)
     result = scheduler.schedule_and_run(
@@ -101,7 +107,7 @@ agent_team_tool = ToolDefinition(
             },
             "max_replans": {
                 "type": "integer",
-                "description": "Maximum allowed replanning cycles if quality gates fail (default: 1, range: 0-3).",
+                "description": "Maximum allowed replanning cycles if quality gates fail (default: 1, range: 0-1).",
                 "default": 1,
             },
         },

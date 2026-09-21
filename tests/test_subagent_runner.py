@@ -210,3 +210,121 @@ def test_task_tool_backward_compatibility(tmp_path):
         assert "[Sub-agent Explore completed]" in res.output
         assert "Type: explore" in res.output
         assert "Found 3 relevant files" in res.output
+
+
+def test_subagent_tool_events_extraction_and_bounded_summary(tmp_path):
+    """Sub-agent run must extract tool events, cap output summaries, and record changed files."""
+    from minicode.subagent_runner import VerificationStatus
+
+    config = SubAgentRunConfig(
+        name="TestExecutionAgent",
+        task_prompt="Run tests and edit",
+        system_prompt="System prompt",
+        cwd=str(tmp_path),
+        runtime={"model": "test-model"},
+        allowed_tools={"test_runner", "edit_file"},
+        is_writer=True,
+        depth=0,
+    )
+
+    huge_test_output = "PASSED test_a\n" * 500  # > 1500 chars
+
+    mock_messages = [
+        {"role": "user", "content": "Run tests"},
+        {
+            "role": "assistant",
+            "content": "Running tests",
+            "assistant_tool_call": {
+                "name": "test_runner",
+                "arguments": {"test_path": "tests/test_foo.py"},
+                "id": "call_123",
+            },
+        },
+        {
+            "role": "tool",
+            "name": "test_runner",
+            "tool_use_id": "call_123",
+            "tool_result": {
+                "ok": True,
+                "output": huge_test_output,
+            },
+        },
+        {
+            "role": "assistant",
+            "content": "Editing file",
+            "assistant_tool_call": {
+                "name": "edit_file",
+                "arguments": {"target_file": "minicode/foo.py", "instructions": "fix bug"},
+                "id": "call_456",
+            },
+        },
+        {
+            "role": "tool",
+            "name": "edit_file",
+            "tool_use_id": "call_456",
+            "tool_result": {
+                "ok": True,
+                "output": "File edited successfully",
+            },
+        },
+        {"role": "assistant", "content": "All done <final>"},
+    ]
+
+    with patch("minicode.tools.create_default_tool_registry") as mock_create_tools, \
+         patch("minicode.subagent_runner.create_model_adapter"), \
+         patch("minicode.subagent_runner.run_agent_turn", return_value=mock_messages):
+
+        mock_registry = MagicMock()
+        mock_registry.list.return_value = []
+        mock_create_tools.return_value = mock_registry
+
+        res = run_subagent(config)
+        assert res.ok
+        assert len(res.tool_events) == 2
+        # Check first event (test_runner)
+        ev1 = res.tool_events[0]
+        assert ev1.tool_name == "test_runner"
+        assert ev1.ok is True
+        assert not ev1.is_error
+        assert ev1.tool_use_id == "call_123"
+        assert len(ev1.output_summary) <= 1500
+        assert ev1.output_summary.endswith("... [truncated]")
+
+        # Check verification_status
+        assert res.verification_status == VerificationStatus.PASS
+
+        # Check changed_files
+        assert "minicode/foo.py" in res.changed_files
+
+
+def test_subagent_writer_permission_inheritance(tmp_path):
+    """Writer agents must inherit parent prompt for permissions."""
+    parent_permissions = MagicMock()
+    parent_permissions.prompt = MagicMock()
+
+    config = SubAgentRunConfig(
+        name="WriterAgent",
+        task_prompt="Write code",
+        system_prompt="System prompt",
+        cwd=str(tmp_path),
+        runtime={"model": "test-model"},
+        allowed_tools={"edit_file"},
+        is_writer=True,
+        parent_permissions=parent_permissions,
+        depth=0,
+    )
+
+    with patch("minicode.tools.create_default_tool_registry") as mock_create_tools, \
+         patch("minicode.subagent_runner.create_model_adapter"), \
+         patch("minicode.subagent_runner.run_agent_turn") as mock_run_turn:
+
+        mock_registry = MagicMock()
+        mock_registry.list.return_value = []
+        mock_create_tools.return_value = mock_registry
+        mock_run_turn.return_value = [{"role": "assistant", "content": "Code written <final>"}]
+
+        res = run_subagent(config)
+        assert res.ok
+        passed_perms = mock_run_turn.call_args[1]["permissions"]
+        assert passed_perms.prompt == parent_permissions.prompt
+

@@ -17,6 +17,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, cast
 
 from minicode.agent_loop import run_agent_turn
@@ -40,6 +41,33 @@ MAX_SUBAGENT_DEPTH: int = 1
 class SubAgentDepthError(RuntimeError):
     """Raised when recursive sub-agent nesting exceeds allowed depth."""
     pass
+
+
+class VerificationStatus(str, Enum):
+    PASS = "PASS"
+    FAIL = "FAIL"
+    UNVERIFIED = "UNVERIFIED"
+
+
+@dataclass(slots=True)
+class SubAgentToolEvent:
+    """Bounded event record of a tool execution within a sub-agent turn."""
+    tool_name: str
+    ok: bool
+    is_error: bool = False
+    output_summary: str = ""  # bounded: capped at 1500 chars
+    tool_use_id: str = ""
+    input_args: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tool_name": self.tool_name,
+            "ok": self.ok,
+            "is_error": self.is_error,
+            "output_summary": self.output_summary,
+            "tool_use_id": self.tool_use_id,
+            "input_args": self.input_args,
+        }
 
 
 @dataclass(slots=True)
@@ -71,6 +99,9 @@ class SubAgentResult:
     elapsed_seconds: float = 0.0
     structured_data: dict[str, Any] | None = None
     error: str | None = None
+    tool_events: list[SubAgentToolEvent] = field(default_factory=list)
+    verification_status: VerificationStatus = VerificationStatus.UNVERIFIED
+    changed_files: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -82,6 +113,9 @@ class SubAgentResult:
             "elapsed_seconds": round(self.elapsed_seconds, 2),
             "structured_data": self.structured_data,
             "error": self.error,
+            "tool_events": [e.to_dict() for e in self.tool_events],
+            "verification_status": self.verification_status.value,
+            "changed_files": self.changed_files,
         }
 
 
@@ -89,7 +123,6 @@ def _extract_json_payload(text: str) -> dict[str, Any] | None:
     """Attempt to extract structured JSON object from sub-agent final text."""
     if not text or not text.strip():
         return None
-    # 1. Direct parse
     text_stripped = text.strip()
     if text_stripped.startswith("{") and text_stripped.endswith("}"):
         try:
@@ -99,7 +132,6 @@ def _extract_json_payload(text: str) -> dict[str, Any] | None:
         except Exception:
             pass
 
-    # 2. Markdown code block
     json_block_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if json_block_match:
         try:
@@ -109,7 +141,6 @@ def _extract_json_payload(text: str) -> dict[str, Any] | None:
         except Exception:
             pass
 
-    # 3. First balanced curly braces
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end > start:
@@ -124,15 +155,7 @@ def _extract_json_payload(text: str) -> dict[str, Any] | None:
 
 
 def run_subagent(config: SubAgentRunConfig) -> SubAgentResult:
-    """Execute an isolated sub-agent with strict boundaries.
-    
-    Guarantees:
-    - Rejects recursive nesting if depth >= MAX_SUBAGENT_DEPTH (depth limit = 1).
-    - Strips 'task' and 'agent_team' from child tool registry.
-    - Strips mcpServers from child runtime to prevent MCP inheritance.
-    - Enforces read-only permissions when is_writer is False.
-    - Catches all exceptions and returns structured SubAgentResult without crashing parent.
-    """
+    """Execute an isolated sub-agent with strict boundaries."""
     start_time = time.time()
 
     # 1. Depth Limit Enforcement
@@ -147,11 +170,11 @@ def run_subagent(config: SubAgentRunConfig) -> SubAgentResult:
             output=msg,
             elapsed_seconds=0.0,
             error="DepthLimitExceeded",
+            verification_status=VerificationStatus.UNVERIFIED,
         )
 
     # 2. Runtime & MCP Isolation
     child_runtime: dict[str, Any] = dict(config.runtime or {})
-    # Strictly strip MCP servers to prevent child agent inheritance
     child_runtime["mcpServers"] = {}
 
     cwd = config.cwd or "."
@@ -167,6 +190,7 @@ def run_subagent(config: SubAgentRunConfig) -> SubAgentResult:
             output=f"Sub-agent tool registry initialization failed: {e}",
             elapsed_seconds=time.time() - start_time,
             error=str(e),
+            verification_status=VerificationStatus.UNVERIFIED,
         )
 
     # Always remove forbidden tools (task, agent_team)
@@ -181,7 +205,6 @@ def run_subagent(config: SubAgentRunConfig) -> SubAgentResult:
     # 4. Model Adapter
     model_identifier = config.model_name or child_runtime.get("model", "")
     if not model_identifier and not child_runtime:
-        # Fallback check
         try:
             from minicode.config import load_runtime_config
             loaded_runtime = load_runtime_config(cwd)
@@ -197,6 +220,7 @@ def run_subagent(config: SubAgentRunConfig) -> SubAgentResult:
             output="Cannot run sub-agent: no model configuration available.",
             elapsed_seconds=time.time() - start_time,
             error="MissingModelConfiguration",
+            verification_status=VerificationStatus.UNVERIFIED,
         )
 
     try:
@@ -212,18 +236,19 @@ def run_subagent(config: SubAgentRunConfig) -> SubAgentResult:
             output=f"Model adapter initialization failed: {e}",
             elapsed_seconds=time.time() - start_time,
             error=str(e),
+            verification_status=VerificationStatus.UNVERIFIED,
         )
 
-    # 5. Permission Sandboxing
-    if not config.is_writer or config.allowed_tools is not None:
-        # Read-only or restricted agent: prompt=None auto-denies writes outside cwd
-        sub_permissions = PermissionManager(cwd, prompt=None)
-    else:
+    # 5. Permission Sandboxing: based on is_writer, NOT allowed_tools is not None
+    if config.is_writer:
         # Writer agent: inherit parent's permission prompt handler
         sub_permissions = PermissionManager(
             cwd,
             prompt=getattr(config.parent_permissions, "prompt", None),
         )
+    else:
+        # Read-only agent: prompt=None auto-denies writes
+        sub_permissions = PermissionManager(cwd, prompt=None)
 
     # 6. Messages Setup
     sub_messages: list[ChatMessage] = cast(
@@ -264,11 +289,88 @@ def run_subagent(config: SubAgentRunConfig) -> SubAgentResult:
             output=f"Sub-agent ({config.name}) failed: {type(e).__name__}: {e}",
             elapsed_seconds=elapsed,
             error=str(e),
+            verification_status=VerificationStatus.UNVERIFIED,
         )
 
     elapsed = time.time() - start_time
 
-    # 8. Extract Outcome
+    # 8. Extract Tool Events and Changed Files from Result Messages
+    tool_events: list[SubAgentToolEvent] = []
+    tool_calls_map: dict[str, dict[str, Any]] = {}
+    changed_files: list[str] = []
+
+    for msg in result_messages:
+        role = msg.get("role")
+        if role == "assistant_tool_call":
+            call_id = msg.get("toolUseId") or msg.get("tool_use_id") or msg.get("id") or ""
+            tname = msg.get("toolName") or msg.get("tool_name") or msg.get("name") or ""
+            tinput = msg.get("input") or msg.get("arguments") or {}
+            tool_calls_map[call_id] = {
+                "tool_name": tname,
+                "input": tinput if isinstance(tinput, dict) else {},
+            }
+        elif role == "assistant" and "assistant_tool_call" in msg:
+            atc = msg["assistant_tool_call"]
+            call_id = atc.get("toolUseId") or atc.get("tool_use_id") or atc.get("id") or ""
+            tname = atc.get("toolName") or atc.get("tool_name") or atc.get("name") or ""
+            tinput = atc.get("input") or atc.get("arguments") or {}
+            tool_calls_map[call_id] = {
+                "tool_name": tname,
+                "input": tinput if isinstance(tinput, dict) else {},
+            }
+        elif role in {"tool_result", "tool"}:
+            call_id = msg.get("toolUseId") or msg.get("tool_use_id") or ""
+            call_info = tool_calls_map.get(call_id, {})
+            tname = msg.get("toolName") or msg.get("tool_name") or call_info.get("tool_name", "")
+            tinput = call_info.get("input", {})
+            if "content" in msg and msg["content"] is not None:
+                content = str(msg["content"])
+                is_err = bool(msg.get("isError", False) or msg.get("is_error", False))
+            elif "tool_result" in msg:
+                tr = msg["tool_result"]
+                if isinstance(tr, dict):
+                    content = str(tr.get("output", ""))
+                    is_err = not tr.get("ok", True)
+                else:
+                    content = str(tr)
+                    is_err = bool(msg.get("isError", False) or msg.get("is_error", False))
+            else:
+                content = ""
+                is_err = bool(msg.get("isError", False) or msg.get("is_error", False))
+
+            if len(content) > 1500:
+                suffix = "... [truncated]"
+                summary = content[: 1500 - len(suffix)] + suffix
+            else:
+                summary = content
+
+            event = SubAgentToolEvent(
+                tool_name=tname,
+                ok=not is_err,
+                is_error=is_err,
+                output_summary=summary,
+                tool_use_id=call_id,
+                input_args=tinput,
+            )
+            tool_events.append(event)
+
+            if tname in {"write_file", "edit_file", "patch_file"} and not is_err:
+                fpath = tinput.get("path") or tinput.get("file_path") or tinput.get("target_file")
+                if fpath and str(fpath) not in changed_files:
+                    changed_files.append(str(fpath))
+
+    # Evaluate verification status strictly from test_runner tool events
+    test_runner_events = [e for e in tool_events if e.tool_name == "test_runner"]
+    if not test_runner_events:
+        verification_status = VerificationStatus.UNVERIFIED
+    else:
+        last_test = test_runner_events[-1]
+        if last_test.ok and not last_test.is_error:
+            verification_status = VerificationStatus.PASS
+        else:
+            verification_status = VerificationStatus.FAIL
+
+    # 9. Extract Final Message
     final_message = ""
     for msg in reversed(result_messages):
         if msg.get("role") == "assistant" and msg.get("content", "").strip():
@@ -280,8 +382,6 @@ def run_subagent(config: SubAgentRunConfig) -> SubAgentResult:
 
     tool_calls_count = sum(1 for m in result_messages if m.get("role") == "assistant_tool_call")
     user_messages_count = sum(1 for m in result_messages if m.get("role") == "user")
-
-    # Extract structured JSON if available (e.g. for Reviewer verdict)
     structured_data = _extract_json_payload(final_message)
 
     return SubAgentResult(
@@ -293,4 +393,7 @@ def run_subagent(config: SubAgentRunConfig) -> SubAgentResult:
         elapsed_seconds=elapsed,
         structured_data=structured_data,
         error=None,
+        tool_events=tool_events,
+        verification_status=verification_status,
+        changed_files=changed_files,
     )
