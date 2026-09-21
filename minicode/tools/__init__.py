@@ -14,6 +14,7 @@ from minicode.tools.file_tree import file_tree_tool
 from minicode.tools.git import git_tool
 from minicode.tools.grep_files import grep_files_tool
 from minicode.tools.list_files import list_files_tool
+from minicode.tools.load_context_artifact import create_load_context_artifact_tool
 from minicode.tools.load_skill import create_load_skill_tool
 from minicode.tools.patch_file import patch_file_tool
 from minicode.tools.read_file import read_file_tool
@@ -136,6 +137,7 @@ def create_default_tool_registry(cwd: str, runtime: dict | None = None) -> ToolR
     tools.extend(
         [
             create_load_skill_tool(cwd),
+            create_load_context_artifact_tool(cwd),
             *mcp["tools"],
         ]
     )

@@ -505,8 +505,23 @@ class ContextBudgetManager:
                 )
                 continue
 
-            # Protected items are kept unless catastrophic overflow
+            # Protected items cannot be EVICTED. But if externalizable and oversized, they can be OFFLOADed
             if item.protected:
+                if item.externalizable and item.estimated_tokens >= self.config.offload_threshold_tokens:
+                    preview_tokens = min(100, item.estimated_tokens // 4)
+                    freed = max(0, item.estimated_tokens - preview_tokens)
+                    current_estimate -= freed
+                    decisions_by_idx[idx] = ContextDecision(
+                        item_id=item.item_id,
+                        message_index=idx,
+                        action=ContextAction.OFFLOAD,
+                        score=item.importance_score,
+                        original_tokens=item.estimated_tokens,
+                        target_tokens=preview_tokens,
+                        reason=f"offload_protected_{item.zone.value}",
+                    )
+                    continue
+
                 decisions_by_idx[idx] = ContextDecision(
                     item_id=item.item_id,
                     message_index=idx,
@@ -726,13 +741,19 @@ class ContextBudgetManager:
         self,
         messages: list[dict[str, Any]],
         model: str | None = None,
+        available_budget: int | None = None,
         artifact_store: Any = None,
         compactor: Any = None,
         metrics: ContextBudgetMetrics | None = None,
         active_files: set[str] | None = None,
     ) -> tuple[list[dict[str, Any]], ContextBudgetPlan]:
         """Single entrypoint to plan and apply context budget before a model step."""
-        plan = self.plan(messages, model=model, active_files=active_files)
+        plan = self.plan(
+            messages,
+            model=model,
+            available_budget=available_budget,
+            active_files=active_files,
+        )
         modified, _ = self.apply(
             messages,
             plan=plan,
