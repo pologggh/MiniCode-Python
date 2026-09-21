@@ -1,0 +1,908 @@
+{
+  "provenance": {
+    "baseline_commit": "fd9bf63",
+    "adaptive_commit": "1a07358",
+    "phase1_merge_sha": "f3d8d7acde0248c252dda11c832baac70b977f96",
+    "phase1_parent_baseline": "fd9bf63b74aa2717d5020f98af9df61c15fcfdfc",
+    "phase1_parent_feature": "0db89b1325ed3c4ec4fbca5e05abc5f3889060a9",
+    "provenance_verified": true
+  },
+  "baseline": {
+    "commit_sha": "fd9bf63b74aa2717d5020f98af9df61c15fcfdfc",
+    "python_version": "3.13.9",
+    "platform": "Windows 10",
+    "timestamp": "2026-09-21T07:39:33Z",
+    "capabilities": {
+      "skill_router": false,
+      "experience_memory": false,
+      "context_budget": false,
+      "agent_team": false,
+      "security_policy": false
+    },
+    "categories": {
+      "skill_routing": {
+        "catalog_sizes": {
+          "10": {
+            "catalog_size": 10,
+            "median_latency_ms": 0.0,
+            "avg_skills_exposed": 10,
+            "avg_estimated_tokens": 273,
+            "recall_rate": 1.0,
+            "false_positive_exposure_rate": 0.9
+          },
+          "100": {
+            "catalog_size": 100,
+            "median_latency_ms": 0.01,
+            "avg_skills_exposed": 100,
+            "avg_estimated_tokens": 3378,
+            "recall_rate": 1.0,
+            "false_positive_exposure_rate": 0.99
+          },
+          "500": {
+            "catalog_size": 500,
+            "median_latency_ms": 0.04,
+            "avg_skills_exposed": 500,
+            "avg_estimated_tokens": 17303,
+            "recall_rate": 1.0,
+            "false_positive_exposure_rate": 0.998
+          }
+        },
+        "query_results": [],
+        "edge_cases": {
+          "short_query_handled": true,
+          "high_priority_unrelated_suppressed": false
+        }
+      },
+      "experience_memory": {
+        "dedup_behavior": false,
+        "normal_failure_leakage": 0.0,
+        "verified_retrieval_precision": 1.0,
+        "failure_recovery_recall": "N/A",
+        "metadata_preservation": false
+      },
+      "context_runtime": {
+        "estimated_context_tokens": 512,
+        "budget_compliance": true,
+        "critical_retention": true,
+        "stable_task_retention": true,
+        "latest_verification_retention": true,
+        "artifact_recovery_supported": false,
+        "artifacts_offloaded_count": 0
+      },
+      "multi_agent": {
+        "one_off_task_delegation": true,
+        "centralized_multi_agent": "UNSUPPORTED",
+        "dag_dependency_execution": "UNSUPPORTED",
+        "sibling_concurrency": "UNSUPPORTED",
+        "writer_serialization": "UNSUPPORTED",
+        "role_quality_gates": "UNSUPPORTED",
+        "bounded_replan": "UNSUPPORTED",
+        "parent_context_isolation": "UNSUPPORTED"
+      },
+      "security": {
+        "critical_action_block_rate": 0.33,
+        "permission_enforcement_rate": 0.6,
+        "sensitive_secret_leak_rate": 1.0,
+        "fail_closed_rate": 0.5,
+        "mcp_pre_execution_gate": false,
+        "untrusted_taint_enforcement": false,
+        "tamper_evident_audit": "UNSUPPORTED"
+      },
+      "runtime_tasks": {
+        "all_tasks_completed": true,
+        "total_tool_calls": 5,
+        "task_details": [
+          {
+            "task_id": "runtime-task-1-search",
+            "name": "Codebase Search",
+            "completed": true,
+            "tool_calls_count": 1,
+            "tool_executed": false,
+            "wall_clock_ms": 0.01,
+            "error": "ToolRegistry.execute() missing 1 required positional argument: 'context'"
+          },
+          {
+            "task_id": "runtime-task-2-edit",
+            "name": "Single-File Edit",
+            "completed": true,
+            "tool_calls_count": 1,
+            "tool_executed": false,
+            "wall_clock_ms": 0.01,
+            "error": "ToolRegistry.execute() missing 1 required positional argument: 'context'"
+          },
+          {
+            "task_id": "runtime-task-3-test-repair",
+            "name": "Test Failure Repair",
+            "completed": true,
+            "tool_calls_count": 1,
+            "tool_executed": false,
+            "wall_clock_ms": 0.0,
+            "error": "ToolRegistry.execute() missing 1 required positional argument: 'context'"
+          },
+          {
+            "task_id": "runtime-task-4-large-result",
+            "name": "Large Tool Result Handling",
+            "completed": true,
+            "tool_calls_count": 1,
+            "tool_executed": false,
+            "wall_clock_ms": 0.0,
+            "error": "ToolRegistry.execute() missing 1 required positional argument: 'context'"
+          },
+          {
+            "task_id": "runtime-task-5-dangerous-command",
+            "name": "Dangerous Command Gate",
+            "completed": true,
+            "tool_calls_count": 1,
+            "tool_executed": false,
+            "wall_clock_ms": 0.0,
+            "error": "ToolRegistry.execute() missing 1 required positional argument: 'context'"
+          }
+        ]
+      }
+    }
+  },
+  "adaptive": {
+    "commit_sha": "1a07358710576c6f16a8d8cabf517c4c4bc97950",
+    "python_version": "3.13.9",
+    "platform": "Windows 10",
+    "timestamp": "2026-09-21T07:39:34Z",
+    "capabilities": {
+      "skill_router": true,
+      "experience_memory": true,
+      "context_budget": true,
+      "agent_team": true,
+      "security_policy": true
+    },
+    "categories": {
+      "skill_routing": {
+        "catalog_sizes": {
+          "10": {
+            "catalog_size": 10,
+            "median_latency_ms": 0.24,
+            "avg_skills_exposed": 1.43,
+            "avg_estimated_tokens": 41.0,
+            "recall_rate": 1.0,
+            "false_positive_exposure_rate": 0.0
+          },
+          "100": {
+            "catalog_size": 100,
+            "median_latency_ms": 2.3,
+            "avg_skills_exposed": 1.71,
+            "avg_estimated_tokens": 51.9,
+            "recall_rate": 1.0,
+            "false_positive_exposure_rate": 0.0
+          },
+          "500": {
+            "catalog_size": 500,
+            "median_latency_ms": 66.82,
+            "avg_skills_exposed": 1.71,
+            "avg_estimated_tokens": 52.0,
+            "recall_rate": 1.0,
+            "false_positive_exposure_rate": 0.0
+          }
+        },
+        "query_results": [
+          {
+            "query": "Build a FastAPI REST endpoint with pydantic request validation",
+            "target_skill": "fastapi-service",
+            "routed_skills": [
+              "fastapi-service"
+            ],
+            "exposed_count": 1,
+            "estimated_tokens": 25
+          },
+          {
+            "query": "Execute pytest test cases and report failing assertions",
+            "target_skill": "pytest-testing",
+            "routed_skills": [
+              "pytest-testing"
+            ],
+            "exposed_count": 1,
+            "estimated_tokens": 27
+          },
+          {
+            "query": "Optimize multi-stage Docker container build",
+            "target_skill": "docker-deployment",
+            "routed_skills": [
+              "docker-deployment",
+              "fastapi-service",
+              "postgresql-database"
+            ],
+            "exposed_count": 3,
+            "estimated_tokens": 90
+          },
+          {
+            "query": "Optimize PostgreSQL database query plan and indexes",
+            "target_skill": "postgresql-database",
+            "routed_skills": [
+              "postgresql-database",
+              "docker-deployment",
+              "graphql-module-2"
+            ],
+            "exposed_count": 3,
+            "estimated_tokens": 97
+          },
+          {
+            "query": "Bake homemade artisan sourdough bread with whole wheat flour",
+            "target_skill": null,
+            "routed_skills": [],
+            "exposed_count": 0,
+            "estimated_tokens": 0
+          },
+          {
+            "query": "go",
+            "target_skill": "go-concurrency",
+            "routed_skills": [
+              "go-concurrency"
+            ],
+            "exposed_count": 1,
+            "estimated_tokens": 17
+          },
+          {
+            "query": "Optimize database queries for inventory records",
+            "target_skill": "postgresql-database",
+            "routed_skills": [
+              "postgresql-database",
+              "ansible-module-1",
+              "ansible-module-2"
+            ],
+            "exposed_count": 3,
+            "estimated_tokens": 107
+          }
+        ],
+        "edge_cases": {
+          "short_query_handled": true,
+          "high_priority_unrelated_suppressed": true
+        }
+      },
+      "experience_memory": {
+        "dedup_behavior": true,
+        "normal_failure_leakage": 0.0,
+        "verified_retrieval_precision": 1.0,
+        "failure_recovery_recall": 1.0,
+        "metadata_preservation": true
+      },
+      "context_runtime": {
+        "estimated_context_tokens": 743,
+        "budget_compliance": true,
+        "critical_retention": true,
+        "stable_task_retention": true,
+        "latest_verification_retention": true,
+        "artifact_recovery_supported": true,
+        "artifacts_offloaded_count": 2
+      },
+      "multi_agent": {
+        "one_off_task_delegation": true,
+        "centralized_multi_agent": true,
+        "dag_dependency_execution": true,
+        "sibling_concurrency": true,
+        "writer_serialization": true,
+        "role_quality_gates": true,
+        "bounded_replan": true,
+        "parent_context_isolation": true
+      },
+      "security": {
+        "critical_action_block_rate": 1.0,
+        "permission_enforcement_rate": 0.8,
+        "sensitive_secret_leak_rate": 0.0,
+        "fail_closed_rate": 1.0,
+        "mcp_pre_execution_gate": true,
+        "untrusted_taint_enforcement": true,
+        "tamper_evident_audit": true
+      },
+      "runtime_tasks": {
+        "all_tasks_completed": true,
+        "total_tool_calls": 5,
+        "task_details": [
+          {
+            "task_id": "runtime-task-1-search",
+            "name": "Codebase Search",
+            "completed": true,
+            "tool_calls_count": 1,
+            "tool_executed": false,
+            "wall_clock_ms": 0.01,
+            "error": "ToolRegistry.execute() missing 1 required positional argument: 'context'"
+          },
+          {
+            "task_id": "runtime-task-2-edit",
+            "name": "Single-File Edit",
+            "completed": true,
+            "tool_calls_count": 1,
+            "tool_executed": false,
+            "wall_clock_ms": 0.01,
+            "error": "ToolRegistry.execute() missing 1 required positional argument: 'context'"
+          },
+          {
+            "task_id": "runtime-task-3-test-repair",
+            "name": "Test Failure Repair",
+            "completed": true,
+            "tool_calls_count": 1,
+            "tool_executed": false,
+            "wall_clock_ms": 0.0,
+            "error": "ToolRegistry.execute() missing 1 required positional argument: 'context'"
+          },
+          {
+            "task_id": "runtime-task-4-large-result",
+            "name": "Large Tool Result Handling",
+            "completed": true,
+            "tool_calls_count": 1,
+            "tool_executed": false,
+            "wall_clock_ms": 0.0,
+            "error": "ToolRegistry.execute() missing 1 required positional argument: 'context'"
+          },
+          {
+            "task_id": "runtime-task-5-dangerous-command",
+            "name": "Dangerous Command Gate",
+            "completed": true,
+            "tool_calls_count": 1,
+            "tool_executed": false,
+            "wall_clock_ms": 0.0,
+            "error": "ToolRegistry.execute() missing 1 required positional argument: 'context'"
+          }
+        ]
+      }
+    }
+  },
+  "metrics": [
+    {
+      "name": "skill_recall_catalog_10",
+      "category": "Skill Routing",
+      "description": "Relevant skill recall @ top-k with 10 skills in catalog",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "rate",
+      "baseline_value": 1.0,
+      "adaptive_value": 1.0,
+      "absolute_delta": 0.0,
+      "relative_delta": 0.0,
+      "improved": false,
+      "notes": "Target skill retrieved in routed prompt"
+    },
+    {
+      "name": "skill_prompt_tokens_10",
+      "category": "Skill Routing",
+      "description": "Local estimated prompt tokens exposed for 10-skill catalog",
+      "comparability": "DIRECT",
+      "direction": "lower_is_better",
+      "unit": "tokens",
+      "baseline_value": 273,
+      "adaptive_value": 41.0,
+      "absolute_delta": -232.0,
+      "relative_delta": -84.98,
+      "improved": true,
+      "notes": "Local estimated prompt/catalog tokens per task"
+    },
+    {
+      "name": "skills_exposed_10",
+      "category": "Skill Routing",
+      "description": "Average number of skills exposed in prompt (10 catalog)",
+      "comparability": "DIRECT",
+      "direction": "lower_is_better",
+      "unit": "count",
+      "baseline_value": 10,
+      "adaptive_value": 1.43,
+      "absolute_delta": -8.57,
+      "relative_delta": -85.7,
+      "improved": true,
+      "notes": "Baseline exposes entire catalog on every turn"
+    },
+    {
+      "name": "false_positive_rate_10",
+      "category": "Skill Routing",
+      "description": "False positive skill exposure rate on unrelated queries (10 catalog)",
+      "comparability": "DIRECT",
+      "direction": "lower_is_better",
+      "unit": "rate",
+      "baseline_value": 0.9,
+      "adaptive_value": 0.0,
+      "absolute_delta": -0.9,
+      "relative_delta": -100.0,
+      "improved": true,
+      "notes": "Fraction of irrelevant skills dumped into prompt"
+    },
+    {
+      "name": "skill_recall_catalog_100",
+      "category": "Skill Routing",
+      "description": "Relevant skill recall @ top-k with 100 skills in catalog",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "rate",
+      "baseline_value": 1.0,
+      "adaptive_value": 1.0,
+      "absolute_delta": 0.0,
+      "relative_delta": 0.0,
+      "improved": false,
+      "notes": "Target skill retrieved in routed prompt"
+    },
+    {
+      "name": "skill_prompt_tokens_100",
+      "category": "Skill Routing",
+      "description": "Local estimated prompt tokens exposed for 100-skill catalog",
+      "comparability": "DIRECT",
+      "direction": "lower_is_better",
+      "unit": "tokens",
+      "baseline_value": 3378,
+      "adaptive_value": 51.9,
+      "absolute_delta": -3326.1,
+      "relative_delta": -98.46,
+      "improved": true,
+      "notes": "Local estimated prompt/catalog tokens per task"
+    },
+    {
+      "name": "skills_exposed_100",
+      "category": "Skill Routing",
+      "description": "Average number of skills exposed in prompt (100 catalog)",
+      "comparability": "DIRECT",
+      "direction": "lower_is_better",
+      "unit": "count",
+      "baseline_value": 100,
+      "adaptive_value": 1.71,
+      "absolute_delta": -98.29,
+      "relative_delta": -98.29,
+      "improved": true,
+      "notes": "Baseline exposes entire catalog on every turn"
+    },
+    {
+      "name": "false_positive_rate_100",
+      "category": "Skill Routing",
+      "description": "False positive skill exposure rate on unrelated queries (100 catalog)",
+      "comparability": "DIRECT",
+      "direction": "lower_is_better",
+      "unit": "rate",
+      "baseline_value": 0.99,
+      "adaptive_value": 0.0,
+      "absolute_delta": -0.99,
+      "relative_delta": -100.0,
+      "improved": true,
+      "notes": "Fraction of irrelevant skills dumped into prompt"
+    },
+    {
+      "name": "skill_recall_catalog_500",
+      "category": "Skill Routing",
+      "description": "Relevant skill recall @ top-k with 500 skills in catalog",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "rate",
+      "baseline_value": 1.0,
+      "adaptive_value": 1.0,
+      "absolute_delta": 0.0,
+      "relative_delta": 0.0,
+      "improved": false,
+      "notes": "Target skill retrieved in routed prompt"
+    },
+    {
+      "name": "skill_prompt_tokens_500",
+      "category": "Skill Routing",
+      "description": "Local estimated prompt tokens exposed for 500-skill catalog",
+      "comparability": "DIRECT",
+      "direction": "lower_is_better",
+      "unit": "tokens",
+      "baseline_value": 17303,
+      "adaptive_value": 52.0,
+      "absolute_delta": -17251.0,
+      "relative_delta": -99.7,
+      "improved": true,
+      "notes": "Local estimated prompt/catalog tokens per task"
+    },
+    {
+      "name": "skills_exposed_500",
+      "category": "Skill Routing",
+      "description": "Average number of skills exposed in prompt (500 catalog)",
+      "comparability": "DIRECT",
+      "direction": "lower_is_better",
+      "unit": "count",
+      "baseline_value": 500,
+      "adaptive_value": 1.71,
+      "absolute_delta": -498.29,
+      "relative_delta": -99.66,
+      "improved": true,
+      "notes": "Baseline exposes entire catalog on every turn"
+    },
+    {
+      "name": "false_positive_rate_500",
+      "category": "Skill Routing",
+      "description": "False positive skill exposure rate on unrelated queries (500 catalog)",
+      "comparability": "DIRECT",
+      "direction": "lower_is_better",
+      "unit": "rate",
+      "baseline_value": 0.998,
+      "adaptive_value": 0.0,
+      "absolute_delta": -0.998,
+      "relative_delta": -100.0,
+      "improved": true,
+      "notes": "Fraction of irrelevant skills dumped into prompt"
+    },
+    {
+      "name": "high_priority_unrelated_suppressed",
+      "category": "Skill Routing",
+      "description": "Suppresses high-priority unrelated skills when domain does not match",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": false,
+      "adaptive_value": true,
+      "absolute_delta": 1.0,
+      "relative_delta": null,
+      "improved": true,
+      "notes": "Prevents urgent alert skills hijacking database queries"
+    },
+    {
+      "name": "normal_failure_leakage",
+      "category": "Experience Memory",
+      "description": "Proportion of past failure experiences leaked into normal task context",
+      "comparability": "DIRECT",
+      "direction": "lower_is_better",
+      "unit": "rate",
+      "baseline_value": 0.0,
+      "adaptive_value": 0.0,
+      "absolute_delta": 0.0,
+      "relative_delta": null,
+      "improved": false,
+      "notes": "Adaptive gates injection to verified successful experiences for normal tasks"
+    },
+    {
+      "name": "verified_retrieval_precision",
+      "category": "Experience Memory",
+      "description": "Precision of retrieved experiences being verified successes",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "rate",
+      "baseline_value": 1.0,
+      "adaptive_value": 1.0,
+      "absolute_delta": 0.0,
+      "relative_delta": 0.0,
+      "improved": false,
+      "notes": "Adaptive enforces verification status in memory records"
+    },
+    {
+      "name": "failure_recovery_recall",
+      "category": "Experience Memory",
+      "description": "Recall of targeted recovery guidance when error is encountered",
+      "comparability": "N/A",
+      "direction": "higher_is_better",
+      "unit": "rate",
+      "baseline_value": "N/A",
+      "adaptive_value": 1.0,
+      "absolute_delta": null,
+      "relative_delta": null,
+      "improved": null,
+      "notes": "Baseline lacks structured recovery routing"
+    },
+    {
+      "name": "memory_deduplication",
+      "category": "Experience Memory",
+      "description": "Automated SHA-256 fingerprint deduplication of identical experiences",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": false,
+      "adaptive_value": true,
+      "absolute_delta": 1.0,
+      "relative_delta": null,
+      "improved": true,
+      "notes": "Prevents memory bloat across repeated workflows"
+    },
+    {
+      "name": "metadata_preservation",
+      "category": "Experience Memory",
+      "description": "Preservation of structured outcome, verification proof, and recovery advice",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": false,
+      "adaptive_value": true,
+      "absolute_delta": 1.0,
+      "relative_delta": null,
+      "improved": true,
+      "notes": "Baseline stores unstructured text entries"
+    },
+    {
+      "name": "estimated_context_tokens",
+      "category": "Context Management",
+      "description": "Local estimated total tokens in prepared prompt after compaction/budgeting",
+      "comparability": "DIRECT",
+      "direction": "lower_is_better",
+      "unit": "tokens",
+      "baseline_value": 512,
+      "adaptive_value": 743,
+      "absolute_delta": 231.0,
+      "relative_delta": 45.12,
+      "improved": false,
+      "notes": "Adaptive offloads massive tool outputs to artifacts"
+    },
+    {
+      "name": "critical_constraint_retention",
+      "category": "Context Management",
+      "description": "Retention of early critical task constraint across long conversation",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": true,
+      "adaptive_value": true,
+      "absolute_delta": 0.0,
+      "relative_delta": 0.0,
+      "improved": false,
+      "notes": "Protected constraints survive aggressive compaction"
+    },
+    {
+      "name": "stable_task_retention",
+      "category": "Context Management",
+      "description": "Retention of stable system task state across turns",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": true,
+      "adaptive_value": true,
+      "absolute_delta": 0.0,
+      "relative_delta": 0.0,
+      "improved": false,
+      "notes": "System prompt and core task retained"
+    },
+    {
+      "name": "latest_verification_retention",
+      "category": "Context Management",
+      "description": "Retention of latest verification evidence over stale intermediate logs",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": true,
+      "adaptive_value": true,
+      "absolute_delta": 0.0,
+      "relative_delta": 0.0,
+      "improved": false,
+      "notes": "Recent verification evidence protected with high priority"
+    },
+    {
+      "name": "budget_compliance",
+      "category": "Context Management",
+      "description": "Compliance of prepared messages with configured token budget",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": true,
+      "adaptive_value": true,
+      "absolute_delta": 0.0,
+      "relative_delta": 0.0,
+      "improved": false,
+      "notes": "Strict layer budgeting in adaptive mode"
+    },
+    {
+      "name": "recoverable_context_artifacts",
+      "category": "Context Management",
+      "description": "Offloaded large tool results recoverable via artifact store",
+      "comparability": "ADAPTIVE_ONLY",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": "UNSUPPORTED",
+      "adaptive_value": true,
+      "absolute_delta": null,
+      "relative_delta": null,
+      "improved": null,
+      "notes": "Baseline discards truncated tool results permanently"
+    },
+    {
+      "name": "one_off_task_delegation",
+      "category": "Multi-Agent Runtime",
+      "description": "Delegation to single child sub-agent via task tool",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": true,
+      "adaptive_value": true,
+      "absolute_delta": 0.0,
+      "relative_delta": 0.0,
+      "improved": false,
+      "notes": "Supported in both baseline and adaptive"
+    },
+    {
+      "name": "centralized_multi_agent",
+      "category": "Multi-Agent Runtime",
+      "description": "Centralized agent team orchestration with roles and lifecycle",
+      "comparability": "ADAPTIVE_ONLY",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": "UNSUPPORTED",
+      "adaptive_value": true,
+      "absolute_delta": null,
+      "relative_delta": null,
+      "improved": null,
+      "notes": "Baseline only has single one-off task tool"
+    },
+    {
+      "name": "dag_dependency_execution",
+      "category": "Multi-Agent Runtime",
+      "description": "Topological DAG task scheduling with dependency satisfaction",
+      "comparability": "ADAPTIVE_ONLY",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": "UNSUPPORTED",
+      "adaptive_value": true,
+      "absolute_delta": null,
+      "relative_delta": null,
+      "improved": null,
+      "notes": "Adaptive executes research -> coding -> test -> review pipeline"
+    },
+    {
+      "name": "sibling_concurrency",
+      "category": "Multi-Agent Runtime",
+      "description": "Concurrent execution of read-only sibling research tasks",
+      "comparability": "ADAPTIVE_ONLY",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": "UNSUPPORTED",
+      "adaptive_value": true,
+      "absolute_delta": null,
+      "relative_delta": null,
+      "improved": null,
+      "notes": "Adaptive parallelizes independent research nodes"
+    },
+    {
+      "name": "writer_serialization",
+      "category": "Multi-Agent Runtime",
+      "description": "Workspace write lock prevents race conditions between writers",
+      "comparability": "ADAPTIVE_ONLY",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": "UNSUPPORTED",
+      "adaptive_value": true,
+      "absolute_delta": null,
+      "relative_delta": null,
+      "improved": null,
+      "notes": "Adaptive serializes coder agents"
+    },
+    {
+      "name": "role_quality_gates",
+      "category": "Multi-Agent Runtime",
+      "description": "Quality gates (TestGate & ReviewGate) validating subagent deliverables",
+      "comparability": "ADAPTIVE_ONLY",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": "UNSUPPORTED",
+      "adaptive_value": true,
+      "absolute_delta": null,
+      "relative_delta": null,
+      "improved": null,
+      "notes": "Enforces test evidence and code review approvals"
+    },
+    {
+      "name": "bounded_replan",
+      "category": "Multi-Agent Runtime",
+      "description": "Re-planning attempts strictly bounded to prevent infinite loops",
+      "comparability": "ADAPTIVE_ONLY",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": "UNSUPPORTED",
+      "adaptive_value": true,
+      "absolute_delta": null,
+      "relative_delta": null,
+      "improved": null,
+      "notes": "Capped by max_replan_attempts"
+    },
+    {
+      "name": "parent_context_isolation",
+      "category": "Multi-Agent Runtime",
+      "description": "Child execution traces isolated from parent turn context",
+      "comparability": "ADAPTIVE_ONLY",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": "UNSUPPORTED",
+      "adaptive_value": true,
+      "absolute_delta": null,
+      "relative_delta": null,
+      "improved": null,
+      "notes": "Parent receives concise tool result, raw child history retained in child"
+    },
+    {
+      "name": "critical_action_block_rate",
+      "category": "Security Policy",
+      "description": "Block rate for catastrophic commands (git reset --hard, rm -rf, etc.)",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "rate",
+      "baseline_value": 0.33,
+      "adaptive_value": 1.0,
+      "absolute_delta": 0.67,
+      "relative_delta": 203.03,
+      "improved": true,
+      "notes": "Adaptive enforces hard denial even in BYPASS permission mode"
+    },
+    {
+      "name": "permission_enforcement_rate",
+      "category": "Security Policy",
+      "description": "Overall permission policy enforcement rate across dangerous actions",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "rate",
+      "baseline_value": 0.6,
+      "adaptive_value": 0.8,
+      "absolute_delta": 0.2,
+      "relative_delta": 33.33,
+      "improved": true,
+      "notes": "Gating sensitive file edits and commands"
+    },
+    {
+      "name": "sensitive_secret_leak_rate",
+      "category": "Security Policy",
+      "description": "Leakage rate of raw credentials during sensitive file reads (.env, keys)",
+      "comparability": "DIRECT",
+      "direction": "lower_is_better",
+      "unit": "rate",
+      "baseline_value": 1.0,
+      "adaptive_value": 0.0,
+      "absolute_delta": -1.0,
+      "relative_delta": -100.0,
+      "improved": true,
+      "notes": "Adaptive automatically masks API keys with [REDACTED_SECRET]"
+    },
+    {
+      "name": "fail_closed_missing_permissions",
+      "category": "Security Policy",
+      "description": "Fail-closed behavior when permissions are unconfigured or unapproved",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "rate",
+      "baseline_value": 0.5,
+      "adaptive_value": 1.0,
+      "absolute_delta": 0.5,
+      "relative_delta": 100.0,
+      "improved": true,
+      "notes": "Adaptive blocks tool execution when approval route fails"
+    },
+    {
+      "name": "mcp_pre_execution_gate",
+      "category": "Security Policy",
+      "description": "Pre-execution security policy evaluation on external MCP tool calls",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": false,
+      "adaptive_value": true,
+      "absolute_delta": 1.0,
+      "relative_delta": null,
+      "improved": true,
+      "notes": "Adaptive classifies unknown MCP tools as UNTRUSTED_EXTERNAL"
+    },
+    {
+      "name": "untrusted_taint_enforcement",
+      "category": "Security Policy",
+      "description": "Detection and taint escalation for prompt injection in external inputs",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": false,
+      "adaptive_value": true,
+      "absolute_delta": 1.0,
+      "relative_delta": null,
+      "improved": true,
+      "notes": "Adaptive escalates ALLOW decisions to ASK if untrusted taint is present"
+    },
+    {
+      "name": "tamper_evident_audit_chain",
+      "category": "Security Policy",
+      "description": "SHA-256 hash-chained tamper-evident security audit log",
+      "comparability": "ADAPTIVE_ONLY",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": "UNSUPPORTED",
+      "adaptive_value": true,
+      "absolute_delta": null,
+      "relative_delta": null,
+      "improved": null,
+      "notes": "Cryptographic hash chaining validates audit log integrity"
+    },
+    {
+      "name": "common_runtime_task_completion",
+      "category": "Common Runtime Tasks",
+      "description": "Deterministic completion of 5 standard runtime tasks",
+      "comparability": "DIRECT",
+      "direction": "higher_is_better",
+      "unit": "boolean",
+      "baseline_value": true,
+      "adaptive_value": true,
+      "absolute_delta": 0.0,
+      "relative_delta": 0.0,
+      "improved": false,
+      "notes": "Both versions complete identical scripted agent loop tasks"
+    }
+  ]
+}
