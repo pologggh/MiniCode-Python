@@ -137,42 +137,49 @@ SKILL_EVAL_QUERIES = [
     {
         "query": "Build a FastAPI REST endpoint with pydantic request validation",
         "target_skill": "fastapi-service",
+        "relevant_skills": ["fastapi-service"],
         "is_unrelated": False,
         "is_edge_case": False,
     },
     {
         "query": "Execute pytest test cases and report failing assertions",
         "target_skill": "pytest-testing",
+        "relevant_skills": ["pytest-testing"],
         "is_unrelated": False,
         "is_edge_case": False,
     },
     {
         "query": "Optimize multi-stage Docker container build",
         "target_skill": "docker-deployment",
+        "relevant_skills": ["docker-deployment"],
         "is_unrelated": False,
         "is_edge_case": False,
     },
     {
         "query": "Optimize PostgreSQL database query plan and indexes",
         "target_skill": "postgresql-database",
+        "relevant_skills": ["postgresql-database"],
         "is_unrelated": False,
         "is_edge_case": False,
     },
     {
         "query": "Bake homemade artisan sourdough bread with whole wheat flour",
         "target_skill": None,
+        "relevant_skills": [],
         "is_unrelated": True,
         "is_edge_case": False,
     },
     {
         "query": "go",
         "target_skill": "go-concurrency",
+        "relevant_skills": ["go-concurrency"],
         "is_unrelated": False,
         "is_edge_case": True,
     },
     {
         "query": "Optimize database queries for inventory records",
         "target_skill": "postgresql-database",
+        "relevant_skills": ["postgresql-database"],
         "unwanted_skill": "critical-security-alert",
         "is_unrelated": False,
         "is_edge_case": True,
@@ -271,10 +278,28 @@ MEMORY_EVAL_QUERIES = [
         "prohibited_leakage": ["exp-failed-tool", "exp-failed-ver", "exp-blocked"],
     },
     {
+        "query": "Configure FastAPI CORS middleware for frontend domain access",
+        "type": "normal",
+        "expected_id": "exp-ver-fastapi",
+        "prohibited_leakage": ["exp-failed-tool", "exp-failed-ver", "exp-blocked"],
+    },
+    {
+        "query": "Configure SQLite journal mode for concurrent connections",
+        "type": "normal",
+        "expected_id": "exp-unver-sqlite",
+        "prohibited_leakage": ["exp-failed-tool", "exp-failed-ver", "exp-blocked"],
+    },
+    {
         "query": "flake8 E501 line too long error during verification",
         "type": "failure_recovery",
         "expected_id": "exp-failed-ver",
         "expected_advice": "Split dictionary comprehension",
+    },
+    {
+        "query": "npm install 401 Unauthorized against registry",
+        "type": "failure_recovery",
+        "expected_id": "exp-failed-tool",
+        "expected_advice": "Configure ~/.npmrc with valid NPM_TOKEN",
     },
 ]
 
@@ -448,13 +473,13 @@ COMMON_RUNTIME_TASKS = [
     {
         "id": "runtime-task-3-test-repair",
         "name": "Test Failure Repair",
-        "prompt": "/cmd python -c \"print('test simulation')\"",
+        "prompt": "/cmd python test_check.py",
         "description": "Agent runs a test check command",
     },
     {
         "id": "runtime-task-4-large-result",
         "name": "Large Tool Result Handling",
-        "prompt": "/cmd python -c \"for i in range(100): print('log line ' + str(i))\"",
+        "prompt": "/cmd python generate_logs.py",
         "description": "Agent receives multi-line command output",
     },
     {
