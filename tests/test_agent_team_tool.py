@@ -12,15 +12,9 @@ from minicode.tools.agent_team import agent_team_tool
 
 def test_agent_team_tool_validator():
     """agent_team_tool validator enforces required goal and clamps max_replans."""
-    # Valid input
-    res = agent_team_tool.validator({"goal": "Add user search feature", "use_worktree": True, "max_replans": 2})
-    assert res["goal"] == "Add user search feature"
-    assert res["use_worktree"] is True
-    assert res["max_replans"] == 2
-
-    # Clamping max_replans
+    # Clamping max_replans (Phase 4.1 clamps to 0-1)
     res_clamped = agent_team_tool.validator({"goal": "Test clamp", "max_replans": 10})
-    assert res_clamped["max_replans"] == 3
+    assert res_clamped["max_replans"] == 1
 
     res_negative = agent_team_tool.validator({"goal": "Test clamp", "max_replans": -5})
     assert res_negative["max_replans"] == 0

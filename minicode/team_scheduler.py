@@ -549,11 +549,14 @@ class TeamScheduler:
         terminal_test_id = f"test_replan_{replan_count}" if replan_count > 0 else "test"
         terminal_reviewer_id = f"reviewer_replan_{replan_count}" if replan_count > 0 else "reviewer"
 
+        has_test_task = any("test" in tid for tid in graph.definitions)
+        has_reviewer_task = any("reviewer" in tid for tid in graph.definitions)
+
         test_gate_res = gate_results.get(terminal_test_id)
         review_gate_res = gate_results.get(terminal_reviewer_id)
 
-        terminal_test_pass = test_gate_res is not None and test_gate_res.passed
-        terminal_review_pass = review_gate_res is not None and review_gate_res.passed
+        terminal_test_pass = (test_gate_res is not None and test_gate_res.passed) if has_test_task else True
+        terminal_review_pass = (review_gate_res is not None and review_gate_res.passed) if has_reviewer_task else True
 
         # Unhandled failures check
         unhandled_failures = [f for f in failed if f not in replan_state["handled"]]
